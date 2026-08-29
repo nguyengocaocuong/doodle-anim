@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>friends — all my friends are made of javascript</title>
+<style>
+  html,body{margin:0;padding:0;background:#f4efe4;height:100%;overflow:hidden}
+  canvas{display:block;margin:0 auto}
+</style>
+</head>
+<body>
+<canvas id="cv" width="1280" height="900"></canvas>
+<script>
+'use strict';
+/* ============================================================
+ * friends — naive doodle-face generator sheets, after
+ * @Threeaio's "all my friends are made of javascript":
+ * cream paper, wobbly ink outlines, pale skin tints, seeded
+ * faces (hair / eyes / glasses / freckles / mustache ...),
+ * generated names in monospace, staggered blinks. Loop = 4s.
+ * URL params: ?seed=7 &cols=4 &rows=2 &live
+ * Live mode: click the NEUES BLATT pill (or press any key)
+ * to deal a fresh sheet.
+ * ============================================================ */
+
+function mulberry32(seed){
+  let a = seed >>> 0;
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+class RNG {
+  constructor(seed){ this.f = mulberry32(seed); }
+  next(){ return this.f(); }
+  range(a,b){ return a + (b-a)*this.f(); }
+  int(a,b){ return Math.floor(this.range(a, b+1)); }
+  pick(arr){ return arr[Math.floor(this.f()*arr.length)]; }
+  chance(p){ return this.f() < p; }
+}
+function makeNoise1D(seed){
+  const rng = mulberry32(seed);
+  const N = 128, table = new Float32Array(N*2);
+  for(let i=0;i<N;i++) table[i] = rng()*2-1;
+  for(let i=0;i<N;i++) table[N+i] = table[i];
+  return function(t){
+    const i = Math.floor(t), f = t - i;
+    const u = f*f*(3-2*f);
+    return table[i%N] + (table[(i+1)%N] - table[i%N]) * u;
+  };
+}
+const INK = '#241f1a';
+
+function subdivide(pts, step){
+  if(pts.length < 2) return pts.slice();
+  const out = [pts[0].slice()];
+  for(let i=1;i<pts.length;i++){
+    const [x0,y0] = pts[i-1], [x1,y1] = pts[i];
+    const d = Math.hypot(x1-x0, y1-y0);
+    const n = Math.max(1, Math.round(d/step));
+    for(let k=1;k<=n;k++){ const u = k/n; out.push([x0+(x1-x0)*u, y0+(y1-y0)*u]); }
+  }
+  return out;
+}
+function wobblePts(pts, seed, mag, close){
+  const nx = makeNoise1D(seed), ny = makeNoise1D(seed+101);
+  return pts.map((p,i)=>{
+    let dx = nx(i*0.35)*mag, dy = ny(i*0.35)*mag;
+    if(close && (i===0 || i===pts.length-1)){ dx = nx(0)*mag; dy = ny(0)*mag; }
+    return [p[0]+dx, p[1]+dy];
+  });
+}
+function pathFrom(pts, close){
+  const p = new Path2D();
+  p.moveTo(pts[0][0], pts[0][1]);
+  for(let i=1;i<pts.length;i++) p.lineTo(pts[i][0], pts[i][1]);
+  if(close) p.closePath();
+  return p;
+}
+function roughStroke(ctx, pts, o={}){
+  const sub = subdivide(pts, o.step ?? 8);
+  ctx.save();
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.strokeStyle = o.color ?? INK;
+  for(let pass=0; pass<2; pass++){
+    const wp = wobblePts(sub, (o.seed ?? 1) + pass*104729, (o.wobble ?? 1.2)*(pass? 0.8:1), o.close ?? false);
+    ctx.globalAlpha *= pass ? (o.alpha ?? 1)*0.35 : (o.alpha ?? 1);
+    ctx.lineWidth = pass ? (o.width ?? 4)*0.65 : (o.width ?? 4);
+    ctx.stroke(pathFrom(wp, o.close ?? false));
+  }
+  ctx.restore();
+}
+function flatFill(ctx, pts, color, o={}){
+  const sub = subdivide(pts, 9);
+  const wp = wobblePts(sub, (o.seed ?? 1)+55, o.wobble ?? 1.0, true);
+  ctx.save();
+  ctx.globalAlpha *= o.alpha ?? 1;
+  ctx.fillStyle = color;
+  ctx.fill(pathFrom(wp, true));
+  ctx.restore();
+}
+function shape(ctx, pts, o={}){
+  if(o.fill) flatFill(ctx, pts, o.fill, o);
+  roughStroke(ctx, pts, { ...o, close:true });
+}
+function ellipsePts(cx,cy,rx,ry,n=24,rot=0){
+  const pts=[];
+  for(let i=0;i<n;i++){
+    const a = i/n*Math.PI*2;
+    const x = Math.cos(a)*rx, y = Math.sin(a)*ry;
+    pts.push([cx + x*Math.cos(rot)-y*Math.sin(rot), cy + x*Math.sin(rot)+y*Math.cos(rot)]);
+  }
+  return pts;
+}
+function blobPts(cx, cy, r, seed, opts={}){
+  const n = opts.n ?? 28;
+  const n1 = makeNoise1D(seed), n2 = makeNoise1D(seed+31);
+  const amp = opts.amp ?? 0.05, sqX = opts.sqX ?? 1, sqY = opts.sqY ?? 1;
+  const pts = [];
+  for(let i=0;i<n;i++){
+    const a = i/n*Math.PI*2;
+    const rr = r * (1 + amp*n1(i*0.55) + amp*0.5*n2(i*1.3));
+    pts.push([cx + Math.cos(a)*rr*sqX, cy + Math.sin(a)*rr*sqY]);
+  }
+  return pts;
+}
+function arcPts(cx, cy, r, a0, a1, n=12){
+  const pts = [];
+  for(let i=0;i<=n;i++){
+    const a = a0 + (a1-a0)*i/n;
+    pts.push([cx + Math.cos(a)*r, cy + Math.sin(a)*r]);
+  }
+  return pts;
+}
+function dot(ctx, x, y, r, color, alpha=1){
+  ctx.save();
+  ctx.globalAlpha *= alpha; ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+/* ---------- cream paper backdrop ---------- */
+function makePaper(w, h, seed){
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#f4efe4';
+  ctx.fillRect(0,0,w,h);
+  const rng = mulberry32(seed);
+  for(let i=0;i<7;i++){
+    const x = rng()*w, y = rng()*h, r = 160+rng()*300;
+    const g = ctx.createRadialGradient(x,y,0,x,y,r);
+    g.addColorStop(0, 'rgba(214,204,182,0.22)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x-r,y-r,r*2,r*2);
+  }
+  const img = ctx.getImageData(0,0,w,h);
+  const d = img.data;
+  const n2 = makeNoise1D(seed+77);
+  let i = 0;
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      const g = n2(x*0.013 + y*0.017)*3.5 + (rng()-0.5)*6;
+      d[i] += g; d[i+1] += g; d[i+2] += g;
+      i += 4;
+    }
+  }
+  ctx.putImageData(img,0,0);
+  return cv;
+}
+
+/* ---------- name generator (YUNKOLA, KEDFEN, MORMOSU ...) ---------- */
+const N_PRE = ['Y','K','M','H','R','S','T','V','N','L','B','D','P','QU','W'];
+const N_VOW = ['A','E','I','O','U'];
+const N_CON = ['L','R','N','M','S','T','K','D','V','X','F','G','B','P'];
+function makeName(rng){
+  const syl = ()=> {
+    let s = rng.pick(N_CON) + rng.pick(N_VOW);
+    if(rng.chance(0.55)) s += rng.pick(N_CON);
+    return s;
+  };
+  let name = rng.pick(N_PRE) + rng.pick(N_VOW);
+  if(rng.chance(0.5)) name += rng.pick(N_CON);
+  name += syl();
+  if(rng.chance(0.45)) name += syl();
+  return name;
+}
+
+/* ============================================================
+ * Friend — seeded doodle head. Local space: face center (0,0),
+ * r≈60. Thin ink outline, pale skin wash, one gag per face.
+ * ============================================================ */
+const SKINS = ['#f7f1f8', '#fdf2ee', '#eef1fa', '#f9f4ec', '#f4f0f6'];
+const HAIRC = ['#26222b', '#6b3a26', '#c9a25e', '#a34a2a', '#8b8b8b', '#d77fa1', '#3a3230', '#7a5a34'];
+const BLUSH = '#e8a0a4';
+
+class Friend {
+  constructor(seed){
+    const rng = new RNG(seed);
+    this.seed = seed;
+    this.name = makeName(rng);
+    this.headShape = rng.pick(['round','oval','egg','wide']);
+    this.skin = rng.pick(SKINS);
+    this.hairStyle = rng.pick(['bald','buzz','bowl','bangs','sweep','pigtails','braids','afro','curly','bun','beanie','hat']);
+    this.hairColor = rng.pick(HAIRC);
+    this.eyeStyle = rng.pick(['dot','dot','circle','circle','x','closed','sleepy']);
+    this.eyeJitter = rng.range(0.85, 1.2);          // one eye bigger — the charm
+    this.browStyle = rng.pick(['none','flat','angry','arched','worried']);
+    this.noseStyle = rng.pick(['line','line','dot','angle','o']);
+    this.mouthStyle = rng.pick(['smile','smile','grin','o','open','wavy','flat']);
+    this.mustache = rng.chance(0.14);
+    this.beard = rng.chance(0.16);                  // jaw stubble dot-field
+    this.freckles = rng.chance(0.4);
+    this.blushMode = rng.pick(['none','oval','hatch']);
+    this.acc = rng.pick(['none','none','none','roundGlasses','squareGlasses','bandaid','earring']);
+    this.blinkOff = rng.range(0, 4);
+    this.swayOff = rng.range(0, Math.PI*2);
+    this.gaze = rng.range(0, Math.PI*2);
+    this.earR = rng.range(5.5, 8);
+  }
+  blinking(t){ return ((t + this.blinkOff) % 4) < 0.14; }
+  get fullHair(){ return ['afro','curly','pigtails','braids'].includes(this.hairStyle); }
+
+  facePts(){
+    const r = 60, n = 26, pts = [];
+    for(let i=0;i<n;i++){
+      const a = i/n*Math.PI*2;
+      let x = Math.cos(a)*r, y = Math.sin(a)*r;
+      if(this.headShape === 'oval') y *= 1.28;
+      if(this.headShape === 'wide') x *= 1.16;
+      if(this.headShape === 'egg'){
+        if(y > 0){ const k = y/r; x *= 1 - k*0.22; y *= 1.12; }
+        else x *= 1.08;
+      }
+      pts.push([x, y]);
+    }
+    return pts;
+  }
+  // half-height of the skull — oval heads are taller, hair rides on top
+  topY(){ return this.headShape === 'oval' ? 76 : 60; }
+
+  drawBackHair(ctx){
+    const s = this.seed, ty = this.topY();
+    if(this.hairStyle === 'afro')
+      shape(ctx, blobPts(0, -ty*0.28, 78, s^0x51, { amp:0.09, n:30 }), { seed:s^0x52, fill:this.hairColor, width:4, wobble:1.6 });
+    else if(this.hairStyle === 'curly')
+      shape(ctx, blobPts(0, -ty*0.18, 70, s^0x53, { amp:0.11, n:30, sqY:1.05 }), { seed:s^0x54, fill:this.hairColor, width:4, wobble:1.6 });
+    else if(this.hairStyle === 'pigtails' || this.hairStyle === 'braids'){
+      // cap behind
+      shape(ctx, arcPts(0, -6, 62, Math.PI*1.0, Math.PI*2.0, 16).concat([[56,-10],[-56,-10]]),
+        { seed:s^0x55, fill:this.hairColor, width:4, wobble:1.2 });
+      // two tapered tails
+      for(const sd of [-1,1]){
+        const base = [sd*56, -ty*0.35];
+        if(this.hairStyle === 'braids'){
+          // stacked beads down the side
+          for(let i=0;i<3;i++){
+            const by = -12 + i*22;
+            shape(ctx, blobPts(sd*68, by, 12-i*1.5, s^0x57+sd*3+i, { amp:0.08, n:14 }),
+              { seed:s^0x58+sd*3+i, fill:this.hairColor, width:3.5, wobble:0.9 });
+          }
+          dot(ctx, sd*68, 40, 4, '#c25e5e');
+        }else{
+          shape(ctx, [base, [sd*70, -ty*0.34], [sd*76, 0], [sd*72, 22], [sd*64, 30], [sd*58, 10]],
+            { seed:s^0x56+sd, fill:this.hairColor, width:4, wobble:1.2 });
+          dot(ctx, base[0]+sd*2, base[1]+6, 4.5, '#c25e5e');   // tie
+        }
+      }
+    }
+  }
+
+  drawFrontHair(ctx){
+    const s = this.seed, ty = this.topY(), st = this.hairStyle;
+    if(st === 'bald'){
+      // 3-5 sparse hairs on the crown
+      const r2 = new RNG(s^0x61);
+      const nH = r2.int(2, 5);
+      for(let i=0;i<nH;i++){
+        const a = r2.range(Math.PI*1.2, Math.PI*1.8);
+        const x = Math.cos(a)*ty*0.9, y = Math.sin(a)*ty*0.9;
+        roughStroke(ctx, [[x, y],[x + r2.range(-3,3), y - r2.range(6,12)]], { seed:s+i*7, wobble:0.3, width:2 });
+      }
+    }else if(st === 'buzz'){
+      // stubble ticks hugging the crown
+      for(let i=0;i<=12;i++){
+        const a = Math.PI*1.08 + (Math.PI*0.84)*(i/12);
+        const x0 = Math.cos(a)*(ty*0.92), y0 = Math.sin(a)*(ty*0.92);
+        roughStroke(ctx, [[x0, y0],[x0 + Math.cos(a)*8, y0 + Math.sin(a)*8]], { seed:s+i*13, wobble:0.3, width:2.2 });
+      }
+    }else if(st === 'bowl'){
+      shape(ctx, arcPts(0, -8, ty*0.98, Math.PI*1.0, Math.PI*2.0, 16).concat([[ty*0.92, -ty*0.28],[-ty*0.92, -ty*0.28]]),
+        { seed:s^0x62, fill:this.hairColor, width:4, wobble:1.2 });
+    }else if(st === 'bangs'){
+      const pts = arcPts(0, -8, ty*1.0, Math.PI*1.0, Math.PI*2.0, 16);
+      const fringe = [], tips = 7;
+      for(let i=tips;i>=0;i--){
+        const x = -ty*0.9 + (ty*1.8)*(i/tips);
+        fringe.push([x, -ty*0.32 + (i%2 ? ty*0.13 : 0)]);
+      }
+      shape(ctx, pts.concat(fringe), { seed:s^0x63, fill:this.hairColor, width:4, wobble:1.2 });
+    }else if(st === 'sweep'){
+      // asymmetric side-sweep draped over one side of the forehead
+      const sd = (s & 1) ? 1 : -1;
+      shape(ctx, [
+        [-sd*ty*0.9, -ty*0.1], [-sd*ty*0.55, -ty*1.0], [sd*ty*0.45, -ty*1.05], [sd*ty*0.92, -ty*0.35],
+        [sd*ty*0.6, -ty*0.1], [sd*ty*0.5, ty*0.45], [sd*ty*0.32, ty*0.1], [sd*ty*0.05, -ty*0.28],
+        [-sd*ty*0.35, -ty*0.22], [-sd*ty*0.65, -ty*0.12]
+      ], { seed:s^0x64, fill:this.hairColor, width:4, wobble:1.3 });
+    }else if(st === 'bun'){
+      shape(ctx, arcPts(0, -6, ty*0.98, Math.PI*1.0, Math.PI*2.0, 16).concat([[ty*0.9, -ty*0.25],[-ty*0.9, -ty*0.25]]),
+        { seed:s^0x65, fill:this.hairColor, width:4, wobble:1.2 });
+      shape(ctx, blobPts(0, -ty*1.08, 16, s^0x66, { amp:0.08 }), { seed:s^0x67, fill:this.hairColor, width:4 });
+      roughStroke(ctx, arcPts(0, -ty*1.08, 9, 0, Math.PI*1.6, 10), { seed:s^0x68, wobble:0.4, width:2, alpha:0.4 });
+    }else if(st === 'beanie'){
+      shape(ctx, arcPts(0, -4, ty*1.02, Math.PI*1.0, Math.PI*2.0, 16).concat([[ty*0.95, -ty*0.22],[-ty*0.95, -ty*0.22]]),
+        { seed:s^0x69, fill:this.hairColor, width:4, wobble:1.2 });
+      flatFill(ctx, [[-ty*0.98, -ty*0.3],[ty*0.98, -ty*0.3],[ty*0.95, -ty*0.12],[-ty*0.95, -ty*0.12]], '#c25e5e', { seed:s^0x6a, alpha:0.85 });
+      roughStroke(ctx, [[-ty*0.98, -ty*0.3],[ty*0.98, -ty*0.3]], { seed:s^0x6b, wobble:0.5, width:3 });
+      roughStroke(ctx, [[-ty*0.95, -ty*0.12],[ty*0.95, -ty*0.12]], { seed:s^0x6c, wobble:0.5, width:3 });
+      dot(ctx, 0, -ty*1.12, 7, '#c25e5e', 0.9);
+    }else if(st === 'hat'){
+      // boater: brim ellipse + box top + band
+      shape(ctx, ellipsePts(0, -ty*0.72, ty*1.15, 12, 22), { seed:s^0x6d, fill:'#7d88a8', width:4, wobble:1.0 });
+      shape(ctx, [[-ty*0.62, -ty*0.74],[-ty*0.58, -ty*1.3],[ty*0.58, -ty*1.3],[ty*0.62, -ty*0.74]],
+        { seed:s^0x6e, fill:'#8b96b5', width:4, wobble:1.0 });
+      flatFill(ctx, [[-ty*0.6, -ty*0.94],[ty*0.6, -ty*0.94],[ty*0.61, -ty*0.78],[-ty*0.61, -ty*0.78]], '#3a3444', { seed:s^0x6f, alpha:0.9 });
+    }
+    // afro / curly / pigtails / braids: nothing in front, back hair already drawn
+  }
+
+  draw(ctx, t, x, y, scale){
+    const s = this.seed;
+    const blink = this.blinking(t);
+    ctx.save();
+    ctx.translate(x, y + Math.sin(t*1.2 + this.swayOff)*2.2);
+    ctx.scale(scale, scale);
+
+    const ty = this.topY();
+    this.drawBackHair(ctx);
+
+    // neck + small collar notch
+    flatFill(ctx, [[-8,ty*0.82],[8,ty*0.82],[8,ty*0.82+18],[-8,ty*0.82+18]], this.skin, { seed:s^0x11 });
+    roughStroke(ctx, [[-8,ty*0.8],[-8,ty*0.8+18]], { seed:s^0x12, wobble:0.5, width:2.6 });
+    roughStroke(ctx, [[8,ty*0.8],[8,ty*0.8+18]], { seed:s^0x13, wobble:0.5, width:2.6 });
+    roughStroke(ctx, [[-8,ty*0.8+18],[0,ty*0.8+27],[8,ty*0.8+18]], { seed:s^0x14, wobble:0.4, width:2.6 });
+
+    // ears (skip when big hair covers them)
+    if(!this.fullHair && this.hairStyle !== 'bald'){
+      for(const sd of [-1,1])
+        shape(ctx, arcPts(sd*60, -2, this.earR, -Math.PI/2, Math.PI/2, 8).map(([ex,ey])=>[sd>0?ex:ex, ey]),
+          { seed:s+sd*5, fill:this.skin, width:3, wobble:0.4 });
+    }
+
+    // face
+    shape(ctx, this.facePts(), { seed:s^0x15, fill:this.skin, width:3.4, wobble:1.1 });
+
+    // gaze drift — pupils wander slowly, deterministic in t
+    const gx = Math.sin(t*0.55 + this.gaze)*2.2, gy = Math.cos(t*0.4 + this.gaze)*1.2;
+    const eyeY = -4, eyeDX = 22;
+
+    // brows
+    if(this.browStyle !== 'none' && !blink){
+      for(const sd of [-1,1]){
+        const bx = sd*eyeDX;
+        if(this.browStyle === 'flat')
+          roughStroke(ctx, [[bx-9, eyeY-16],[bx+9, eyeY-16]], { seed:s+sd*21, wobble:0.4, width:2.6 });
+        else if(this.browStyle === 'angry')
+          roughStroke(ctx, [[bx-9, eyeY-20],[bx+9, eyeY-12]], { seed:s+sd*23, wobble:0.4, width:2.8 });
+        else if(this.browStyle === 'arched')
+          roughStroke(ctx, arcPts(bx, eyeY-12, 10, Math.PI*1.15, Math.PI*1.85, 8), { seed:s+sd*25, wobble:0.4, width:2.6 });
+        else if(this.browStyle === 'worried')
+          roughStroke(ctx, [[bx-9, eyeY-13],[bx+9, eyeY-20]], { seed:s+sd*27, wobble:0.4, width:2.4 });
+      }
+    }
+
+    // eyes
+    for(const sd of [-1,1]){
+      const ex = sd*eyeDX;
+      const er = 7 * (sd>0 ? this.eyeJitter : 1);
+      if(blink || this.eyeStyle === 'closed'){
+        roughStroke(ctx, arcPts(ex, eyeY-2, er+2, 0.25, Math.PI-0.25, 8), { seed:s+sd*29, wobble:0.3, width:2.6 });
+        continue;
+      }
+      if(this.eyeStyle === 'x'){
+        roughStroke(ctx, [[ex-5, eyeY-5],[ex+5, eyeY+5]], { seed:s+sd*31, wobble:0.3, width:2.6 });
+        roughStroke(ctx, [[ex-5, eyeY+5],[ex+5, eyeY-5]], { seed:s+sd*33, wobble:0.3, width:2.6 });
+      }else if(this.eyeStyle === 'dot'){
+        dot(ctx, ex+gx, eyeY+gy, 3.4, INK);
+      }else if(this.eyeStyle === 'sleepy'){
+        roughStroke(ctx, [[ex-er-1, eyeY-2],[ex+er+1, eyeY-3]], { seed:s+sd*35, wobble:0.3, width:3 });
+        shape(ctx, [[ex-er, eyeY-2],[ex+er, eyeY-3],[ex+er-2, eyeY+6],[ex-er+2, eyeY+6]], { seed:s+sd*37, fill:'#fff', width:2.4, wobble:0.4 });
+        dot(ctx, ex+gx*0.6, eyeY+2.5, 2.6, INK);
+      }else{ // circle
+        shape(ctx, ellipsePts(ex, eyeY, er, er*1.15, 14), { seed:s+sd*39, fill:'#fff', width:3, wobble:0.5 });
+        dot(ctx, ex+gx, eyeY+gy, 3.2, INK);
+        dot(ctx, ex+gx+1.4, eyeY+gy-1.2, 1, '#fff');
+      }
+    }
+
+    // nose
+    if(this.noseStyle === 'line')
+      roughStroke(ctx, [[2, 6],[5, 16],[0, 18]], { seed:s^0x16, wobble:0.3, width:2.4 });
+    else if(this.noseStyle === 'dot')
+      dot(ctx, 1, 14, 2, INK, 0.8);
+    else if(this.noseStyle === 'angle')
+      roughStroke(ctx, [[-2, 4],[4, 16],[-3, 17]], { seed:s^0x17, wobble:0.3, width:2.4 });
+    else
+      shape(ctx, ellipsePts(1, 16, 3.2, 4.2, 10), { seed:s^0x18, width:2.2, wobble:0.3 });
+
+    // mouth
+    const my = 32;
+    if(this.mouthStyle === 'smile')
+      roughStroke(ctx, arcPts(0, my-8, 14, 0.5, Math.PI-0.5, 10), { seed:s^0x19, wobble:0.4, width:3 });
+    else if(this.mouthStyle === 'grin'){
+      shape(ctx, [[-14, my-4],[14, my-4],[11, my+7],[-11, my+7]], { seed:s^0x1a, fill:'#fff', width:2.8, wobble:0.5 });
+      for(const tx of [-5, 3])
+        roughStroke(ctx, [[tx, my-3.5],[tx, my+6.5]], { seed:s+tx, wobble:0.2, width:1.6, alpha:0.7 });
+      roughStroke(ctx, [[-13, my+1.5],[13, my+1.5]], { seed:s^0x1b, wobble:0.2, width:1.6, alpha:0.7 });
+    }else if(this.mouthStyle === 'o')
+      shape(ctx, ellipsePts(0, my, 5, 6.5, 12), { seed:s^0x1c, fill:'#8a3d3d', width:2.6, wobble:0.4 });
+    else if(this.mouthStyle === 'open'){
+      shape(ctx, arcPts(0, my-10, 13, 0.35, Math.PI-0.35, 12).concat([[0, my+8]]), { seed:s^0x1d, fill:'#c96a6a', width:2.8, wobble:0.5 });
+    }else if(this.mouthStyle === 'wavy')
+      roughStroke(ctx, [[-12, my],[-6, my-3],[0, my],[6, my-3],[12, my]], { seed:s^0x1e, wobble:0.3, width:2.6 });
+    else
+      roughStroke(ctx, [[-11, my],[11, my]], { seed:s^0x1f, wobble:0.3, width:2.6 });
+
+    // mustache
+    if(this.mustache){
+      for(const sd of [-1,1])
+        shape(ctx, [[sd*2, 24],[sd*16, 20],[sd*20, 26],[sd*10, 28]], { seed:s+sd*41, fill:this.hairColor, width:2.6, wobble:0.6 });
+    }
+    // beard stubble — dot field on the jaw
+    if(this.beard){
+      const r2 = new RNG(s^0x20);
+      for(let i=0;i<46;i++){
+        const bx = r2.range(-30, 30), by = r2.range(22, ty*0.72);
+        if((bx*bx)/(34*34) + (by*by)/(ty*ty*0.6) < 1)
+          dot(ctx, bx, by, 0.9, INK, 0.4);
+      }
+    }
+    // freckles
+    if(this.freckles){
+      const r2 = new RNG(s^0x21);
+      for(const sd of [-1,1])
+        for(let i=0;i<7;i++)
+          dot(ctx, sd*26 + r2.range(-9, 9), 12 + r2.range(-5, 7), 0.9, '#b08550', 0.55);
+    }
+    // blush
+    if(this.blushMode === 'oval'){
+      for(const sd of [-1,1]){
+        ctx.save();
+        ctx.globalAlpha *= 0.4; ctx.fillStyle = BLUSH;
+        ctx.beginPath(); ctx.ellipse(sd*34, 16, 8, 5, 0, 0, Math.PI*2); ctx.fill();
+        ctx.restore();
+      }
+    }else if(this.blushMode === 'hatch'){
+      for(const sd of [-1,1])
+        for(let i=0;i<3;i++)
+          roughStroke(ctx, [[sd*30+i*4-4, 12],[sd*30+i*4+2, 20]], { seed:s+sd*43+i, wobble:0.2, width:1.6, color:BLUSH, alpha:0.7 });
+    }
+
+    this.drawFrontHair(ctx);
+
+    // accessories on top
+    if(this.acc === 'roundGlasses'){
+      for(const sd of [-1,1])
+        shape(ctx, ellipsePts(sd*eyeDX, eyeY, 14, 13, 16), { seed:s+sd*45, width:2.8, wobble:0.5 });
+      roughStroke(ctx, [[-eyeDX+13, eyeY-2],[eyeDX-13, eyeY-2]], { seed:s^0x22, wobble:0.3, width:2.4 });
+      for(const sd of [-1,1])
+        roughStroke(ctx, [[sd*(eyeDX+13), eyeY-3],[sd*58, eyeY-6]], { seed:s+sd*47, wobble:0.3, width:2.4 });
+    }else if(this.acc === 'squareGlasses'){
+      for(const sd of [-1,1])
+        shape(ctx, [[sd*eyeDX-14, eyeY-11],[sd*eyeDX+14, eyeY-11],[sd*eyeDX+12, eyeY+10],[sd*eyeDX-12, eyeY+10]],
+          { seed:s+sd*49, width:2.8, wobble:0.6 });
+      roughStroke(ctx, [[-eyeDX+14, eyeY-4],[eyeDX-14, eyeY-4]], { seed:s^0x23, wobble:0.3, width:2.4 });
+    }else if(this.acc === 'bandaid'){
+      ctx.save();
+      ctx.translate(-36, 26); ctx.rotate(-0.5);
+      shape(ctx, [[-13,-6],[13,-6],[13,6],[-13,6]], { seed:s^0x24, fill:'#e8d9b8', width:2.4, wobble:0.5 });
+      roughStroke(ctx, [[-5,-3],[5,3]], { seed:s^0x25, wobble:0.2, width:1.6, alpha:0.6 });
+      roughStroke(ctx, [[-5,3],[5,-3]], { seed:s^0x26, wobble:0.2, width:1.6, alpha:0.6 });
+      ctx.restore();
+    }else if(this.acc === 'earring'){
+      dot(ctx, 62, 8, 2.6, '#c9a25e');
+    }
+    ctx.restore();
+  }
+}
+
+/* ---------- page & scene manager ---------- */
+const canvas = document.getElementById('cv');
+const ctx = canvas.getContext('2d');
+const params = new URLSearchParams(location.search);
+let SEED = parseInt(params.get('seed') ?? '7', 10);
+const COLS = parseInt(params.get('cols') ?? '4', 10);
+const ROWS = parseInt(params.get('rows') ?? '2', 10);
+const LOOP = 4;
+const MONO = '"Courier New", ui-monospace, monospace';
+
+let FRIENDS = [], PAPER = null, BTN = null;
+function deal(seed){
+  SEED = seed;
+  const rng = new RNG(SEED);
+  FRIENDS = [];
+  for(let i=0;i<COLS*ROWS;i++)
+    FRIENDS.push({ f: new Friend(SEED*1000 + i*137), sc: rng.range(0.88, 1.04), rot: rng.range(-0.03, 0.03) });
+  PAPER = makePaper(canvas.width, canvas.height, SEED^0x99);
+}
+
+/* wobbly hand-set title: "all my friends are made of javascript" */
+function drawTitle(ctx, W){
+  const words = [
+    { t:'all' }, { t:'my' }, { t:'friends', hi:true }, { t:'are' },
+    { t:'made' }, { t:'of' }, { t:'javascript', hi:true },
+  ];
+  const rng = new RNG(SEED^0x77);
+  ctx.save();
+  ctx.font = `700 30px ${MONO}`;
+  ctx.textBaseline = 'middle';
+  const widths = words.map(w => ctx.measureText(w.t).width);
+  const gap = 16, padX = 10;
+  const total = widths.reduce((a,w,i)=>a + w + (words[i].hi ? padX*2 : 0), 0) + gap*(words.length-1);
+  let x = W/2 - total/2;
+  const yBase = 52;
+  words.forEach((w, i)=>{
+    const ww = widths[i] + (w.hi ? padX*2 : 0);
+    const rot = rng.range(-0.06, 0.06);
+    const y = yBase + Math.sin((i/(words.length-1))*Math.PI)*8 + rng.range(-2, 2);
+    ctx.save();
+    ctx.translate(x + ww/2, y);
+    ctx.rotate(rot);
+    if(w.hi){
+      ctx.fillStyle = '#26222b';
+      const bx = -ww/2 - 2, by = -19, bw = ww + 4, bh = 38, r = 5;
+      ctx.beginPath();
+      ctx.roundRect(bx, by, bw, bh, r);
+      ctx.fill();
+      ctx.fillStyle = '#f4efe4';
+    }else{
+      ctx.fillStyle = INK;
+    }
+    ctx.textAlign = 'center';
+    ctx.fillText(w.t, 0, 2);
+    ctx.restore();
+    x += ww + gap;
+  });
+  ctx.restore();
+}
+
+function drawButton(ctx, W, H){
+  const label = 'NEUES BLATT';
+  ctx.save();
+  ctx.font = `600 19px ${MONO}`;
+  try{ ctx.letterSpacing = '3px'; }catch(e){}
+  const tw = ctx.measureText(label).width;
+  const bw = tw + 64, bh = 44, bx = W/2 - bw/2, by = H - 66;
+  BTN = { x:bx, y:by, w:bw, h:bh };
+  ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.globalAlpha *= 0.75;
+  ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 22); ctx.stroke();
+  ctx.globalAlpha *= 0.5;
+  ctx.beginPath(); ctx.roundRect(bx+3, by+3, bw-6, bh-6, 19); ctx.stroke();
+  ctx.globalAlpha /= 0.5;
+  ctx.fillStyle = INK; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(label, W/2, by + bh/2 + 1);
+  ctx.restore();
+}
+
+window.__duration = ()=> LOOP;
+window.__seek = function(t){
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0,0,W,H);
+  ctx.drawImage(PAPER, 0, 0);
+  drawTitle(ctx, W);
+  const top = 100, bottom = H - 84;
+  const cw = W/COLS, ch = (bottom-top)/ROWS;
+  FRIENDS.forEach(({f, sc, rot}, i)=>{
+    const cx = (i%COLS + 0.5)*cw, cy = top + (Math.floor(i/COLS) + 0.44)*ch;
+    const scale = sc * Math.min(cw, ch)/215;
+    ctx.save();
+    ctx.translate(cx, cy); ctx.rotate(rot); ctx.translate(-cx, -cy);
+    f.draw(ctx, t, cx, cy, scale);
+    ctx.restore();
+    // name tag
+    ctx.save();
+    ctx.font = `600 ${Math.max(15, 19*scale*1.4)}px ${MONO}`;
+    try{ ctx.letterSpacing = '4px'; }catch(e){}
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillStyle = INK; ctx.globalAlpha *= 0.6;
+    ctx.fillText(f.name, cx, cy + (f.topY()*0.82+52)*scale);
+    ctx.restore();
+  });
+  drawButton(ctx, W, H);
+};
+
+deal(SEED);
+
+if(params.has('live')){
+  const t0 = performance.now();
+  (function loop(){
+    window.__seek(((performance.now()-t0)/1000) % LOOP);
+    requestAnimationFrame(loop);
+  })();
+  const reshuffle = (mx, my)=>{
+    if(!BTN) return;
+    if(mx >= BTN.x && mx <= BTN.x+BTN.w && my >= BTN.y && my <= BTN.y+BTN.h)
+      deal(Math.floor(Math.random()*1e9));
+  };
+  canvas.addEventListener('click', e=>{
+    const r = canvas.getBoundingClientRect();
+    reshuffle((e.clientX-r.left) * canvas.width/r.width, (e.clientY-r.top) * canvas.height/r.height);
+  });
+  window.addEventListener('keydown', ()=> deal(Math.floor(Math.random()*1e9)));
+}else{
+  window.__seek(0.01);
+}
+</script>
+</body>
+</html>

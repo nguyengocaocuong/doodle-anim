@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sketchbook Metropolis — The Artist & The Ink Sprite</title>
+<style>
+  html,body{margin:0;padding:0;background:#181513;height:100%;overflow:hidden}
+  canvas{display:block;margin:0 auto}
+</style>
+</head>
+<body>
+<canvas id="cv" width="1280" height="720"></canvas>
+<script>
+'use strict';
+/* ============================================================
+ * Sketchbook Metropolis (城市速写本：失控的灵感)
+ * Level-Up Visual Edition:
+ *
+ * Visual Storytelling Enhancements:
+ * 1. Act 1: 2D drawing on paper magically peels off into reality,
+ *    kicks over the ink bottle, grabs it, and leaps through window!
+ * 2. Act 2: High-speed parallax city chase with sloshing ink spills,
+ *    puddle splashes, fluttering clothes, and dog getting ink-spotted!
+ * 3. Act 3: Clock tower gears and Roman numerals. Steaming croissant
+ *    with aroma trails. Sprite sniffs, munches (crumbs fly), and
+ *    heart-melts to return the ink.
+ * 4. Act 4: Dynamic Painting Finale! Artist draws the city lines
+ *    while Sprite splashes watercolor blobs (coral, cyan, gold) that
+ *    actively bloom and paint the monochrome city into sunrise color!
+ * ============================================================ */
+
+/* ---------- Seeded PRNG & Noise ---------- */
+function mulberry32(seed){
+  let a = seed >>> 0;
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+class RNG {
+  constructor(seed){ this.f = mulberry32(seed); }
+  next(){ return this.f(); }
+  range(a,b){ return a + (b-a)*this.f(); }
+  int(a,b){ return Math.floor(this.range(a, b+1)); }
+  pick(arr){ return arr[Math.floor(this.f()*arr.length)]; }
+  chance(p){ return this.f() < p; }
+}
+
+function makeNoise1D(seed){
+  const rng = mulberry32(seed);
+  const N = 128, table = new Float32Array(N*2);
+  for(let i=0;i<N;i++) table[i] = rng()*2-1;
+  for(let i=0;i<N;i++) table[N+i] = table[i];
+  return function(t){
+    const i = Math.floor(t), f = t - i;
+    const u = f*f*(3-2*f);
+    return table[i%N] + (table[(i+1)%N] - table[i%N]) * u;
+  };
+}
+
+const clamp01 = x => Math.max(0, Math.min(1, x));
+const smooth = x => { x = clamp01(x); return x*x*(3-2*x); };
+const easeInOut = x => { x = clamp01(x); return x<0.5 ? 2*x*x : 1-Math.pow(-2*x+2,2)/2; };
+const easeOutBack = x => { const c=1.70158; x = clamp01(x); return 1 + (c+1)*Math.pow(x-1,3) + c*Math.pow(x-1,2); };
+
+/* ---------- Colors & Styles ---------- */
+const CHARCOAL = '#26221f';
+const INK_BLACK = '#161412';
+const PENCIL = '#524a44';
+const PAPER_BG = '#e8e0d2';
+const TERRACOTTA = '#df8f88';
+const SAGE = '#687e6b';
+const GOLD = '#f5c042';
+const CYAN = '#5ab3c6';
+const MUSTARD = '#d9b89b';
+const WARM_WHITE = '#fbf7ee';
+
+function subdivide(pts, step=6){
+  if(pts.length < 2) return pts.slice();
+  const out = [pts[0].slice()];
+  for(let i=1;i<pts.length;i++){
+    const [x0,y0] = pts[i-1], [x1,y1] = pts[i];
+    const d = Math.hypot(x1-x0, y1-y0);
+    const n = Math.max(1, Math.round(d/step));
+    for(let k=1;k<=n;k++){
+      const u = k/n;
+      out.push([x0+(x1-x0)*u, y0+(y1-y0)*u]);
+    }
+  }
+  return out;
+}
+
+function wobblePts(pts, seed, mag=1.4, close=false){
+  const nx = makeNoise1D(seed), ny = makeNoise1D(seed+101);
+  return pts.map((p,i)=>{
+    let dx = nx(i*0.38)*mag, dy = ny(i*0.38)*mag;
+    if(close && (i===0 || i===pts.length-1)){ dx = nx(0)*mag; dy = ny(0)*mag; }
+    return [p[0]+dx, p[1]+dy];
+  });
+}
+
+function pathFrom(pts, close=false){
+  const p = new Path2D();
+  if(!pts.length) return p;
+  p.moveTo(pts[0][0], pts[0][1]);
+  for(let i=1;i<pts.length;i++) p.lineTo(pts[i][0], pts[i][1]);
+  if(close) p.closePath();
+  return p;
+}
+
+function charcoalStroke(ctx, pts, o={}){
+  if(pts.length < 2) return;
+  const seed = o.seed ?? 1;
+  const sub = subdivide(pts, o.step ?? 6);
+  const baseW = o.width ?? 3.2;
+  const alpha = o.alpha ?? 0.9;
+  const color = o.color ?? CHARCOAL;
+  const close = o.close ?? false;
+
+  ctx.save();
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.strokeStyle = color;
+
+  const wp1 = wobblePts(sub, seed, o.wobble ?? 1.3, close);
+  ctx.globalAlpha *= alpha;
+  ctx.lineWidth = baseW;
+  ctx.stroke(pathFrom(wp1, close));
+
+  const wp2 = wobblePts(sub, seed + 9187, (o.wobble ?? 1.3)*1.35, close);
+  ctx.globalAlpha *= 0.45;
+  ctx.lineWidth = baseW * 0.65;
+  ctx.stroke(pathFrom(wp2, close));
+
+  ctx.restore();
+}
+
+const roughStroke = charcoalStroke;
+
+function offsetWash(ctx, pts, color, o={}){
+  const seed = o.seed ?? 1;
+  const rng = mulberry32(seed);
+  const ox = (rng() - 0.5) * (o.offset ?? 8);
+  const oy = (rng() - 0.5) * (o.offset ?? 8);
+  const sub = subdivide(pts, 8);
+  const wp = wobblePts(sub, seed + 311, o.wobble ?? 2.0, true).map(p => [p[0] + ox, p[1] + oy]);
+
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.globalAlpha *= o.alpha ?? 0.35;
+  ctx.fill(pathFrom(wp, true));
+  ctx.restore();
+}
+
+function shape(ctx, pts, o={}){
+  if(o.fill) offsetWash(ctx, pts, o.fill, o);
+  charcoalStroke(ctx, pts, { ...o, close:true });
+}
+
+function ellipsePts(cx, cy, rx, ry, n=20, rot=0){
+  const pts=[];
+  for(let i=0;i<n;i++){
+    const a = i/n*Math.PI*2;
+    const x = Math.cos(a)*rx, y = Math.sin(a)*ry;
+    pts.push([cx + x*Math.cos(rot)-y*Math.sin(rot), cy + x*Math.sin(rot)+y*Math.cos(rot)]);
+  }
+  return pts;
+}
+
+function arcPts(cx, cy, r, a0, a1, n=12){
+  const pts = [];
+  for(let i=0;i<=n;i++){
+    const a = a0 + (a1-a0)*i/n;
+    pts.push([cx + Math.cos(a)*r, cy + Math.sin(a)*r]);
+  }
+  return pts;
+}
+
+function dot(ctx, x, y, r, color=CHARCOAL, alpha=0.85){
+  ctx.save();
+  ctx.globalAlpha *= alpha; ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function charcoalSmudge(ctx, cx, cy, rx, ry, seed, alpha=0.75){
+  ctx.save();
+  const rng = mulberry32(seed);
+  ctx.fillStyle = CHARCOAL;
+  for(let pass=0; pass<3; pass++){
+    const prx = rx * (0.85 + (rng()-0.5)*0.3);
+    const pry = ry * (0.85 + (rng()-0.5)*0.3);
+    const pts = ellipsePts(cx + (rng()-0.5)*3, cy + (rng()-0.5)*3, prx, pry, 14);
+    const wp = wobblePts(pts, seed + pass*107, 1.8, true);
+    ctx.globalAlpha = (alpha / 3) * (1.1 - pass*0.1);
+    ctx.fill(pathFrom(wp, true));
+  }
+  ctx.restore();
+}
+
+/* ---------- Texture Background ---------- */
+function makePaper(w, h, seed){
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = PAPER_BG;
+  ctx.fillRect(0,0,w,h);
+
+  const rng = mulberry32(seed);
+  for(let i=0;i<8;i++){
+    const x = rng()*w, y = rng()*h, r = 180 + rng()*320;
+    const g = ctx.createRadialGradient(x,y,0,x,y,r);
+    g.addColorStop(0, 'rgba(215,198,170,0.22)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x-r,y-r,r*2,r*2);
+  }
+  const img = ctx.getImageData(0,0,w,h);
+  const d = img.data;
+  const n2 = makeNoise1D(seed+88);
+  let idx = 0;
+  for(let y=0;y<h;y++){
+    const rowMottle = n2(y*0.08)*2.5;
+    for(let x=0;x<w;x++){
+      const noise = rowMottle + n2(x*0.015 + y*0.019)*3.5 + (rng()-0.5)*8;
+      d[idx]   = Math.max(0, Math.min(255, d[idx]   + noise));
+      d[idx+1] = Math.max(0, Math.min(255, d[idx+1] + noise));
+      d[idx+2] = Math.max(0, Math.min(255, d[idx+2] + noise*0.85));
+      idx += 4;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+
+  const v = ctx.createRadialGradient(w/2, h/2, Math.min(w,h)*0.38, w/2, h/2, Math.max(w,h)*0.78);
+  v.addColorStop(0, 'rgba(0,0,0,0)');
+  v.addColorStop(1, 'rgba(85,70,52,0.22)');
+  ctx.fillStyle = v;
+  ctx.fillRect(0,0,w,h);
+  return cv;
+}
+
+/* ============================================================
+ * Rich Animated Props & Visual FX
+ * ============================================================ */
+
+/* Glowing Ink Bottle with sloshing liquid & splashes */
+function drawInkJar(ctx, t, x, y, scale=1, isSplashing=false, seed=99){
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+
+  const s = seed;
+  // Glass bottle body
+  const jarPts = [[-12, -26], [12, -26], [16, 0], [-16, 0]];
+  shape(ctx, jarPts, { seed:s, fill:'#1a1614', width:2.8, close:true });
+  // Neck & cork
+  shape(ctx, [[-6, -34], [6, -34], [6, -26], [-6, -26]], { seed:s+1, fill:'#c29a5b', width:2.2, close:true });
+
+  // Sloshing ink liquid line
+  const slosh = Math.sin(t*18)*4;
+  roughStroke(ctx, [[-10, -18+slosh], [10, -18-slosh]], { seed:s+2, width:2, color:'#4a6c82' });
+  // White glass reflection tick
+  roughStroke(ctx, [[-8, -22], [-11, -4]], { seed:s+3, width:1.6, color:'#ffffff', alpha:0.75 });
+
+  // Ink drops spilling out while running
+  if(isSplashing){
+    for(let k=0; k<4; k++){
+      const dropU = ((t*6 + k*0.25) % 1);
+      const dx = -20 - dropU*35 - k*8;
+      const dy = -15 + Math.pow(dropU, 1.8)*30;
+      dot(ctx, dx, dy, 2.5*(1-dropU*0.5), INK_BLACK, 0.9*(1-dropU));
+    }
+  }
+
+  ctx.restore();
+}
+
+/* Steaming Golden Croissant */
+function drawCroissant(ctx, t, x, y, scale=1, withSteam=true, seed=150){
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+
+  const s = seed;
+  // Crescent shape with pastry folds
+  const cPts = [[-20, 2], [-12, -14], [0, -18], [12, -14], [20, 2], [10, -4], [0, -8], [-10, -4]];
+  shape(ctx, cPts, { seed:s, fill:GOLD, width:2.6, close:true });
+  // Pastry golden crust lines
+  charcoalStroke(ctx, [[-8, -16], [-6, 0]], { seed:s+1, width:2 });
+  charcoalStroke(ctx, [[0, -18], [0, -2]], { seed:s+2, width:2 });
+  charcoalStroke(ctx, [[8, -16], [6, 0]], { seed:s+3, width:2 });
+
+  // Rising steam trails (curly aroma lines)
+  if(withSteam){
+    for(let k=0; k<3; k++){
+      const stU = ((t*1.5 + k*0.33) % 1);
+      const sx = (k-1)*10 + Math.sin(t*3 + k)*6;
+      const sy = -22 - stU*35;
+      const steamPts = [
+        [sx, sy],
+        [sx + Math.sin(stU*6)*5, sy - 8],
+        [sx - Math.sin(stU*6)*5, sy - 16]
+      ];
+      roughStroke(ctx, steamPts, { seed:s+10+k, width:2.2, color:'#ffffff', alpha:0.75*(1-stU) });
+    }
+  }
+
+  ctx.restore();
+}
+
+/* ============================================================
+ * Mannay Character Models & Animation Rigs
+ * ============================================================ */
+
+/* 1. Artist Rig (Curly Hair, Thick Glasses, Wind-blown Trench Coat) */
+function drawArtist(ctx, t, x, y, scale=1, action='sketch', lookDir=1, seed=42){
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale * lookDir, scale);
+
+  const s = seed;
+  const R = 38;
+
+  const isRunning = action === 'run';
+  const isSitting = action === 'sit';
+  const isPainting = action === 'paint';
+  const isShocked = action === 'shock';
+
+  const phase = t * (isRunning ? 14 : 2);
+  const hop = isRunning ? -Math.abs(Math.sin(phase))*16 : (isShocked ? -26 : Math.sin(t*2)*2);
+  const sway = isRunning ? Math.sin(phase)*0.12 : (isPainting ? Math.sin(t*4)*0.08 : 0);
+
+  ctx.translate(0, hop);
+  ctx.rotate(sway);
+
+  const hipY = -35;
+  const shoulderY = -95;
+  const torsoW = 28;
+
+  // --- Legs ---
+  if(isRunning){
+    const stride = 30;
+    for(const side of [-1, 1]){
+      const ph = phase + (side < 0 ? Math.PI : 0);
+      const fx = Math.sin(ph)*stride;
+      const fy = -Math.max(0, Math.cos(ph))*20;
+      charcoalStroke(ctx, [[0, hipY], [fx*0.5, hipY + 22], [fx, fy]], { seed:s+side*10, width:3.6 });
+      charcoalStroke(ctx, [[fx, fy], [fx + 10, fy]], { seed:s+side*11, width:3.6 });
+    }
+  } else if(isSitting){
+    charcoalStroke(ctx, [[0, hipY], [18, hipY+8], [18, hipY+26]], { seed:s+10, width:3.4 });
+    charcoalStroke(ctx, [[0, hipY], [-8, hipY+8], [-8, hipY+26]], { seed:s+11, width:3.4 });
+  } else {
+    // Standing
+    charcoalStroke(ctx, [[-10, hipY], [-10, 0], [-4, 0]], { seed:s+10, width:3.4 });
+    charcoalStroke(ctx, [[10, hipY], [10, 0], [16, 0]], { seed:s+11, width:3.4 });
+  }
+
+  // --- Trench Coat (Flapping wildly when running) ---
+  const flapBack = isRunning ? Math.sin(phase)*18 - 25 : 0;
+  const coatPts = [
+    [-torsoW*0.9, shoulderY],
+    [torsoW*0.9, shoulderY],
+    [torsoW*1.15, hipY + 10],
+    [-torsoW*1.15 + flapBack, hipY + 10 + (isRunning?10:0)]
+  ];
+  offsetWash(ctx, coatPts, '#7c6858', { seed:s+15, alpha:0.5, offset:3 });
+  charcoalStroke(ctx, coatPts, { seed:s+16, width:3.6, close:true });
+  charcoalStroke(ctx, [[-torsoW*0.5, shoulderY], [0, shoulderY+22], [torsoW*0.5, shoulderY]], { seed:s+17, width:2.6 });
+
+  // --- Arms & Acting ---
+  if(action === 'sketch'){
+    charcoalStroke(ctx, [[-torsoW*0.8, shoulderY+8], [-torsoW*0.4, shoulderY+42], [10, shoulderY+38]], { seed:s+20, width:3.0 });
+    charcoalStroke(ctx, [[torsoW*0.8, shoulderY+8], [torsoW*0.5, shoulderY+34], [14, shoulderY+34]], { seed:s+21, width:3.0 });
+    // Sketchpad
+    const pad = [[-2, shoulderY+24], [26, shoulderY+22], [24, shoulderY+52], [-4, shoulderY+54]];
+    offsetWash(ctx, pad, WARM_WHITE, { seed:s+22, alpha:0.85 });
+    charcoalStroke(ctx, pad, { seed:s+23, width:2.4, close:true });
+  } else if(action === 'run'){
+    const armSw = Math.sin(phase)*32;
+    charcoalStroke(ctx, [[-torsoW*0.8, shoulderY+8], [-torsoW*1.2 - armSw*0.5, shoulderY+35], [-torsoW*1.5 - armSw, shoulderY+20]], { seed:s+20, width:3.4 });
+    charcoalStroke(ctx, [[torsoW*0.8, shoulderY+8], [torsoW*1.2 + armSw*0.5, shoulderY+35], [torsoW*1.5 + armSw, shoulderY+20]], { seed:s+21, width:3.4 });
+    // Clutched pencil like a wand
+    charcoalStroke(ctx, [[torsoW*1.5 + armSw, shoulderY+20], [torsoW*1.8 + armSw, shoulderY+12]], { seed:s+24, width:2.5, color:CHARCOAL });
+  } else if(action === 'offer'){
+    charcoalStroke(ctx, [[-torsoW*0.8, shoulderY+8], [0, shoulderY+35]], { seed:s+20, width:3.0 });
+    charcoalStroke(ctx, [[torsoW*0.8, shoulderY+8], [torsoW*1.4, shoulderY+26], [torsoW*2.2, shoulderY+24]], { seed:s+21, width:3.2 });
+    drawCroissant(ctx, t, torsoW*2.2, shoulderY+20, 0.9, true, s+25);
+  } else if(action === 'paint'){
+    // Passionate brush stroke arm
+    const brushAngle = Math.sin(t*6)*25;
+    charcoalStroke(ctx, [[-torsoW*0.8, shoulderY+8], [0, shoulderY+40]], { seed:s+20, width:3.0 });
+    charcoalStroke(ctx, [[torsoW*0.8, shoulderY+8], [torsoW*1.4, shoulderY+10], [torsoW*2.0 + brushAngle, shoulderY - 20 + brushAngle*0.5]], { seed:s+21, width:3.4 });
+    // Charcoal wand tip glow
+    dot(ctx, torsoW*2.0 + brushAngle, shoulderY - 20 + brushAngle*0.5, 4, GOLD, 0.9);
+  }
+
+  // --- Mannay Signature Face ---
+  const headCY = shoulderY - R*0.85;
+  const headPts = ellipsePts(0, headCY, R*0.95, R*1.05, 20);
+
+  offsetWash(ctx, ellipsePts(-R*0.5, headCY+R*0.2, R*0.35, R*0.25, 10), TERRACOTTA, { seed:s+30, alpha:0.45 });
+  offsetWash(ctx, ellipsePts(R*0.5, headCY+R*0.2, R*0.35, R*0.25, 10), TERRACOTTA, { seed:s+31, alpha:0.45 });
+  charcoalStroke(ctx, headPts, { seed:s+32, width:3.6, close:true });
+
+  // Ears
+  charcoalStroke(ctx, ellipsePts(-R*1.0, headCY, 7, 13, 10), { seed:s+33, width:2.2, close:true });
+  charcoalStroke(ctx, ellipsePts(R*1.0, headCY, 7, 13, 10), { seed:s+34, width:2.2, close:true });
+
+  // Curly Noodle Hair Cloud
+  const hairCount = 26;
+  const rngH = new RNG(s^0x999);
+  for(let i=0; i<hairCount; i++){
+    const u = (i / (hairCount-1)) * 2 - 1;
+    const cx = u * R * 0.88 + (rngH.next()-0.5)*10;
+    const cy = headCY - R*0.85 + Math.pow(u, 2)*R*0.25 + (rngH.next()-0.5)*10;
+    const loopR = rngH.range(6, 11);
+    const loop = [];
+    for(let k=0; k<=12; k++){
+      const ang = (k/12)*Math.PI*2.4 + rngH.range(0, Math.PI);
+      loop.push([cx + Math.cos(ang)*loopR, cy + Math.sin(ang)*loopR]);
+    }
+    charcoalStroke(ctx, loop, { seed:s+100+i, width:1.8, alpha:0.9 });
+  }
+
+  // Glasses & Eyes
+  const eyeDX = R * 0.42;
+  const eyeY = headCY - R * 0.05;
+  const blink = (t % 3.6) < 0.12;
+
+  const gw = R * 0.32, gh = R * 0.28;
+  charcoalStroke(ctx, ellipsePts(-eyeDX, eyeY, gw, gh, 14), { seed:s+50, width:3.4, close:true });
+  charcoalStroke(ctx, ellipsePts(eyeDX, eyeY, gw, gh, 14), { seed:s+51, width:3.4, close:true });
+  charcoalStroke(ctx, [[-eyeDX+gw*0.9, eyeY-gh*0.1], [eyeDX-gw*0.9, eyeY-gh*0.1]], { seed:s+52, width:3.2 });
+
+  if(!blink){
+    const glance = Math.sin(t*1.6)*1.5;
+    dot(ctx, -eyeDX + glance, eyeY, 2.5, CHARCOAL, 1);
+    dot(ctx, eyeDX + glance, eyeY, 2.5, CHARCOAL, 1);
+  }
+
+  // Nose
+  charcoalStroke(ctx, [[0, eyeY+R*0.1], [R*0.12, eyeY+R*0.42], [-R*0.08, eyeY+R*0.44]], { seed:s+55, width:2.6 });
+
+  // Mustache & Stubble
+  const my = eyeY + R*0.62;
+  for(let i=0; i<7; i++){
+    const u = (i/6)*2 - 1;
+    charcoalStroke(ctx, [[u*10, my-5], [u*10+2, my]], { seed:s+60+i, width:1.6 });
+  }
+  charcoalStroke(ctx, [[-10, my+3], [10, my+3]], { seed:s+68, width:2.2 });
+
+  if(isShocked){
+    charcoalStroke(ctx, [[0, headCY-R*1.4],[0, headCY-R*1.1]], { seed:s+70, width:3.6 });
+    dot(ctx, 0, headCY-R*1.02, 2.8, CHARCOAL);
+  }
+
+  ctx.restore();
+}
+
+/* 2. Beanie Sprite Rig (Dark Eye-patch, Agile Bean Body) */
+function drawBeanieSprite(ctx, t, x, y, scale=1, action='run', seed=88){
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+
+  const s = seed;
+  const R = 24;
+  const isRunning = action === 'run';
+  const isEating = action === 'eat';
+  const isSplashing = action === 'splash';
+
+  const phase = t * (isRunning ? 16 : 4);
+  const hop = isRunning ? -Math.abs(Math.sin(phase))*12 : 0;
+  ctx.translate(0, hop);
+
+  // Tiny running legs
+  if(isRunning){
+    for(const side of [-1, 1]){
+      const ph = phase + (side < 0 ? Math.PI : 0);
+      const fx = Math.sin(ph)*16;
+      const fy = -Math.max(0, Math.cos(ph))*10;
+      charcoalStroke(ctx, [[side*6, -10], [fx, fy]], { seed:s+side*5, width:2.8 });
+    }
+  } else {
+    charcoalStroke(ctx, [[-6, -10], [-6, 0]], { seed:s+5, width:2.8 });
+    charcoalStroke(ctx, [[6, -10], [6, 0]], { seed:s+6, width:2.8 });
+  }
+
+  // Bean Body
+  const body = ellipsePts(0, -22, R*0.9, R*1.05, 14);
+  offsetWash(ctx, body, MUSTARD, { seed:s+10, alpha:0.4 });
+  charcoalStroke(ctx, body, { seed:s+11, width:3.0, close:true });
+
+  // Sage Beanie Hat
+  const cap = arcPts(0, -32, R*0.92, Math.PI*0.95, Math.PI*2.05, 12)
+    .concat([[R*0.8, -32], [-R*0.8, -32]]);
+  offsetWash(ctx, cap, SAGE, { seed:s+15, alpha:0.65 });
+  charcoalStroke(ctx, cap, { seed:s+16, width:2.6, close:true });
+
+  // Dark Eye-Patch
+  charcoalSmudge(ctx, -8, -22, 7, 6, s+20, 0.9);
+
+  // Right Eye (Star-sparkle eye when eating/happy)
+  if(isEating || action === 'happy'){
+    const eyeStar = [[8, -25], [8, -19]];
+    const eyeStar2 = [[5, -22], [11, -22]];
+    charcoalStroke(ctx, eyeStar, { seed:s+21, width:2.2, color:GOLD });
+    charcoalStroke(ctx, eyeStar2, { seed:s+22, width:2.2, color:GOLD });
+  } else {
+    dot(ctx, 8, -22, 2.2, CHARCOAL, 1);
+  }
+
+  // Mouth
+  if(isEating){
+    // Chewing animation
+    const chew = Math.abs(Math.sin(t*12))*4;
+    shape(ctx, ellipsePts(0, -14, 5+chew, 4+chew, 8), { seed:s+25, fill:'#82342c', width:2 });
+    // Flying crumbs
+    for(let k=0; k<3; k++){
+      const cx = (k-1)*8 + Math.sin(t*8+k)*5;
+      const cy = -12 + (k*4);
+      dot(ctx, cx, cy, 1.5, GOLD, 0.85);
+    }
+  } else {
+    charcoalStroke(ctx, [[-4, -14], [8, -16]], { seed:s+25, width:2.2 });
+  }
+
+  // Arms carrying Ink Jar or Flashing Palette
+  if(action === 'carryJar'){
+    charcoalStroke(ctx, [[-12, -20], [0, -12]], { seed:s+30, width:2.4 });
+    charcoalStroke(ctx, [[12, -20], [6, -12]], { seed:s+31, width:2.4 });
+    drawInkJar(ctx, t, 12, -8, 0.85, true, s+32);
+  } else if(action === 'splash'){
+    // Wild splashing arm
+    const spAngle = Math.sin(t*8)*20;
+    charcoalStroke(ctx, [[-12, -20], [-18, -32]], { seed:s+30, width:2.6 });
+    charcoalStroke(ctx, [[12, -20], [22 + spAngle, -28]], { seed:s+31, width:2.6 });
+    drawInkJar(ctx, t, -18, -28, 0.7, false, s+32);
+  }
+
+  ctx.restore();
+}
+
+/* 3. Street Dog */
+function drawDog(ctx, t, x, y, scale=1, seed=120){
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+
+  const s = seed;
+  const wag = Math.sin(t*10)*0.35;
+
+  shape(ctx, ellipsePts(0, -14, 18, 11, 12), { seed:s, fill:'#cbb89d', width:2.4, close:true });
+  shape(ctx, ellipsePts(16, -24, 11, 9, 10), { seed:s+1, fill:'#cbb89d', width:2.2, close:true });
+  shape(ctx, ellipsePts(12, -20, 5, 10, 8, 0.3), { seed:s+2, fill:'#8a755d', width:2, close:true });
+
+  dot(ctx, 19, -26, 1.8, CHARCOAL, 1);
+  dot(ctx, 27, -23, 2.2, CHARCOAL, 1);
+  // Black ink splash mark on dog snout!
+  dot(ctx, 24, -22, 3.2, INK_BLACK, 0.95);
+
+  ctx.save();
+  ctx.translate(-16, -16);
+  ctx.rotate(-0.5 + wag);
+  charcoalStroke(ctx, [[0,0], [-12,-8]], { seed:s+3, width:2.8 });
+  ctx.restore();
+
+  charcoalStroke(ctx, [[-8, -6], [-8, 0]], { seed:s+4, width:2.4 });
+  charcoalStroke(ctx, [[8, -6], [8, 0]], { seed:s+5, width:2.4 });
+
+  ctx.restore();
+}
+
+/* ============================================================
+ * Cinematic Camera Director
+ * ============================================================ */
+function getCamera(t){
+  const keys = [
+    [0.0,  0.42, 0.52, 1.45, 0],   // Act 1: Studio Draft Focus
+    [3.5,  0.48, 0.54, 1.25, 0],   // Act 1: Jump Off Page
+    [7.5,  0.50, 0.55, 1.00, 0],   // Act 2: Wide Chase Track
+    [11.5, 0.55, 0.55, 1.10, 0],   // Act 2: Puddle Jump
+    [15.0, 0.50, 0.42, 1.35, 0],   // Act 3: Clock Pinnacle
+    [19.0, 0.50, 0.44, 1.45, 0],   // Act 3: Croissant Feast & Heart
+    [22.5, 0.50, 0.50, 1.15, 0],   // Act 4: Shared Rooftop Splash
+    [30.0, 0.50, 0.55, 0.92, 0]    // Act 4: Majestic Skyline Pull-back
+  ];
+
+  for(let i=0; i<keys.length-1; i++){
+    if(t >= keys[i][0] && t <= keys[i+1][0]){
+      const u = smooth((t - keys[i][0]) / (keys[i+1][0] - keys[i][0]));
+      const k0 = keys[i], k1 = keys[i+1];
+      return {
+        cx: k0[1] + (k1[1]-k0[1])*u,
+        cy: k0[2] + (k1[2]-k0[2])*u,
+        zoom: k0[3] + (k1[3]-k0[3])*u
+      };
+    }
+  }
+  const last = keys[keys.length-1];
+  return { cx:last[1], cy:last[2], zoom:last[3] };
+}
+
+/* ============================================================
+ * Main Render Function (window.__seek API)
+ * ============================================================ */
+const canvas = document.getElementById('cv');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const TOTAL_DUR = 30.0;
+
+const PAPER = makePaper(W, H, 8888);
+
+window.__duration = ()=> TOTAL_DUR;
+
+window.__seek = function(t){
+  t = Math.max(0, Math.min(TOTAL_DUR, t));
+  ctx.clearRect(0,0,W,H);
+  ctx.drawImage(PAPER, 0, 0);
+
+  const cam = getCamera(t);
+  ctx.save();
+  ctx.translate(W/2, H/2);
+  ctx.scale(cam.zoom, cam.zoom);
+  ctx.translate(-W*cam.cx, -H*cam.cy);
+
+  // ==========================================
+  // ACT 1: STUDIO (0.0s - 7.5s)
+  // ==========================================
+  if(t < 7.5){
+    const floorY = H * 0.78;
+    charcoalStroke(ctx, [[-100, floorY], [W+100, floorY]], { seed:10, width:4.5 });
+
+    // Drafting Desk
+    const deskX = W * 0.44, deskY = floorY - 25;
+    shape(ctx, [[deskX-120, deskY-60], [deskX+120, deskY-75], [deskX+120, deskY-65], [deskX-120, deskY-50]], { seed:12, fill:'#5c4838', width:3.5 });
+    charcoalStroke(ctx, [[deskX-90, deskY-50], [deskX-90, floorY]], { seed:13, width:4.2 });
+    charcoalStroke(ctx, [[deskX+90, deskY-65], [deskX+90, floorY]], { seed:14, width:4.2 });
+
+    // White Drawing Sheet on Table
+    const sheet = [[deskX-50, deskY-60], [deskX+70, deskY-68], [deskX+65, deskY-32], [deskX-55, deskY-24]];
+    offsetWash(ctx, sheet, WARM_WHITE, { seed:15, alpha:0.95, offset:0 });
+    charcoalStroke(ctx, sheet, { seed:16, width:2.6, close:true });
+
+    // Window in background
+    shape(ctx, [[W*0.75, H*0.15], [W*0.95, H*0.15], [W*0.95, H*0.55], [W*0.75, H*0.55]], { seed:17, fill:'#242028', width:3.5 });
+    dot(ctx, W*0.85, H*0.28, 18, '#d4cebe', 0.85);
+
+    // Artist Acting
+    const isShocked = t >= 3.8;
+    drawArtist(ctx, t, W*0.30, floorY-10, 1.18, isShocked ? 'shock' : 'sketch', 1, 42);
+
+    // Sprite Emergence from Paper:
+    // 0.0 - 3.5s: Flat 2D drawing peeling up
+    // 3.5 - 7.5s: Leaping out of frame with ink jar!
+    if(t < 3.5){
+      const drawProgress = clamp01(t / 2.5);
+      // Sketch lines drawing on paper
+      ctx.save();
+      ctx.translate(deskX+8, deskY-46);
+      ctx.scale(0.65, 0.65);
+      if(drawProgress > 0.3) shape(ctx, ellipsePts(0, 0, 16, 18, 12), { seed:20, width:2.2 });
+      if(drawProgress > 0.6) arcPts(0, -10, 16, Math.PI, Math.PI*2, 10);
+      if(drawProgress > 0.9) dot(ctx, 6, 0, 2, CHARCOAL);
+      ctx.restore();
+      // Static ink jar on desk
+      drawInkJar(ctx, t, deskX+60, deskY-66, 0.8, false, 99);
+    } else {
+      const jumpU = (t - 3.5) / 4.0;
+      const sx = deskX+8 + jumpU * (W*0.55);
+      const sy = deskY-46 - Math.sin(jumpU*Math.PI*2)*75 + jumpU*35;
+      drawBeanieSprite(ctx, t, sx, sy, 0.95, 'carryJar', 88);
+
+      // Wet black ink footsteps across the desk!
+      for(let f=0; f<Math.min(5, Math.floor(jumpU*10)); f++){
+        dot(ctx, deskX + 15 + f*18, deskY - 48 + Math.sin(f)*4, 3.5, INK_BLACK, 0.9);
+      }
+    }
+  }
+
+  // ==========================================
+  // ACT 2: STREET PURSUIT (7.5s - 15.0s)
+  // ==========================================
+  else if(t < 15.0){
+    const floorY = H * 0.80;
+    charcoalStroke(ctx, [[-300, floorY], [W+300, floorY]], { seed:100, width:5 });
+
+    // Scrolling City Architecture with Lighted Windows
+    const bldgs = [
+      [-120, floorY, 180, 320],
+      [100, floorY, 160, 420],
+      [300, floorY, 220, 280],
+      [560, floorY, 180, 380],
+      [780, floorY, 240, 310],
+      [1060, floorY, 200, 360]
+    ];
+    bldgs.forEach(([bx, by, bw, bh], i)=>{
+      const pts = [[bx, by], [bx, by-bh], [bx+bw, by-bh], [bx+bw, by]];
+      offsetWash(ctx, pts, '#d2c4b2', { seed:200+i, alpha:0.45 });
+      charcoalStroke(ctx, pts, { seed:201+i, width:3.2 });
+      // Warm glowing windows
+      for(let r=0; r<3; r++){
+        for(let c=0; c<2; c++){
+          const wx = bx + 30 + c*60, wy = by - bh + 50 + r*65;
+          shape(ctx, [[wx, wy], [wx+30, wy], [wx+30, wy+40], [wx, wy+40]], { seed:205+i*10+r*2+c, fill:GOLD, width:2, alpha:0.65 });
+        }
+      }
+    });
+
+    // Street Lamp with glowing cone
+    const lampX = W * 0.50;
+    charcoalStroke(ctx, [[lampX, floorY], [lampX, floorY-260], [lampX+45, floorY-280]], { seed:210, width:4.5 });
+    dot(ctx, lampX+45, floorY-275, 14, GOLD, 0.9);
+
+    // Street Dog barking at chase
+    drawDog(ctx, t, W*0.28, floorY-4, 1.05, 120);
+
+    // Sprite fleeing ahead
+    const chaseProgress = (t - 7.5) / 7.5;
+    const sx = W*0.12 + chaseProgress * (W*0.78);
+    drawBeanieSprite(ctx, t, sx, floorY-6, 1.1, 'carryJar', 88);
+
+    // Artist sprinting behind
+    const ax = sx - 180;
+    drawArtist(ctx, t, ax, floorY-6, 1.3, 'run', 1, 42);
+
+    // Large Ink Splatters on the pavement
+    for(let k=0; k<12; k++){
+      const ix = W*0.08 + k*95;
+      dot(ctx, ix, floorY + 2, 5 + (k%3)*3, INK_BLACK, 0.85);
+      dot(ctx, ix + 8, floorY - 2, 2.5, INK_BLACK, 0.85);
+    }
+  }
+
+  // ==========================================
+  // ACT 3: CLOCK TOWER PEACE (15.0s - 22.5s)
+  // ==========================================
+  else if(t < 22.5){
+    const towerX = W * 0.50, towerY = H * 0.68;
+
+    // Giant Detailed Clock Face
+    const clockR = 160;
+    const clockPts = ellipsePts(towerX, towerY-140, clockR, clockR, 28);
+    offsetWash(ctx, clockPts, WARM_WHITE, { seed:300, alpha:0.75 });
+    charcoalStroke(ctx, clockPts, { seed:301, width:5.5, close:true });
+
+    // Roman Numerals (XII, III, VI, IX ticks)
+    for(let h=0; h<12; h++){
+      const ang = (h/12)*Math.PI*2 - Math.PI/2;
+      const x0 = towerX + Math.cos(ang)*(clockR-24), y0 = (towerY-140) + Math.sin(ang)*(clockR-24);
+      const x1 = towerX + Math.cos(ang)*(clockR-8), y1 = (towerY-140) + Math.sin(ang)*(clockR-8);
+      charcoalStroke(ctx, [[x0, y0], [x1, y1]], { seed:310+h, width:3.5 });
+    }
+
+    // Heavy Clock Hands
+    charcoalStroke(ctx, [[towerX, towerY-140], [towerX+110, towerY-185]], { seed:302, width:7 });
+    charcoalStroke(ctx, [[towerX, towerY-140], [towerX-70, towerY-65]], { seed:303, width:8 });
+
+    const isPeace = t >= 18.2;
+
+    // Sprite on the clock hand: trapped -> eating croissant happily!
+    if(isPeace){
+      drawBeanieSprite(ctx, t, towerX+115, towerY-198, 0.98, 'eat', 88);
+      // Returned ink jar placed between them
+      drawInkJar(ctx, t, towerX+50, towerY-155, 0.85, false, 99);
+    } else {
+      drawBeanieSprite(ctx, t, towerX+115, towerY-198, 0.98, 'carryJar', 88);
+    }
+
+    // Artist extending warm croissant -> sitting relaxed
+    drawArtist(ctx, t, towerX-18, towerY-130, 1.2, isPeace ? 'sketch' : 'offer', 1, 42);
+
+    // Warm Heart & Aroma Steam Explosion (Act 3 Climax)
+    if(isPeace){
+      const heartPulse = 0.85 + 0.15*Math.sin(t*6);
+      dot(ctx, towerX+60, towerY-245, 12*heartPulse, TERRACOTTA, 0.95);
+      dot(ctx, towerX+75, towerY-245, 12*heartPulse, TERRACOTTA, 0.95);
+      charcoalStroke(ctx, [[towerX+48, towerY-242], [towerX+68, towerY-220], [towerX+88, towerY-242]], { seed:320, width:2.6 });
+    }
+  }
+
+  // ==========================================
+  // ACT 4: SUNRISE PAINTING FINALE (22.5s - 30.0s)
+  // ==========================================
+  else {
+    const roofY = H * 0.76;
+    const dawnProgress = clamp01((t - 22.5) / 7.5);
+
+    // Golden Sunrise Gradient
+    const sunX = W * 0.80, sunY = H * 0.32;
+    dot(ctx, sunX, sunY, 56, GOLD, 0.85);
+    dot(ctx, sunX, sunY, 140, '#ffaa44', 0.35*dawnProgress);
+    dot(ctx, sunX, sunY, 260, '#ff7744', 0.18*dawnProgress);
+
+    // Dynamic Watercolor Splash Blooms painting the skyline!
+    const splashes = [
+      [W*0.18, H*0.42, 90, CYAN, 0.45],
+      [W*0.35, H*0.50, 110, TERRACOTTA, 0.5],
+      [W*0.62, H*0.45, 120, GOLD, 0.55],
+      [W*0.82, H*0.52, 100, SAGE, 0.45]
+    ];
+    splashes.forEach(([sx, sy, sr, sc, sa], idx)=>{
+      const growR = sr * Math.min(1, dawnProgress * 1.5);
+      offsetWash(ctx, ellipsePts(sx, sy, growR, growR*0.75, 16), sc, { seed:500+idx, alpha:sa*dawnProgress, offset:12 });
+    });
+
+    // Rooftop Silhouette
+    const roof = [
+      [-100, roofY+80],
+      [W*0.12, roofY],
+      [W*0.88, roofY],
+      [W+100, roofY+80],
+      [W+100, H+100],
+      [-100, H+100]
+    ];
+    offsetWash(ctx, roof, '#3a322c', { seed:400, alpha:0.9 });
+    charcoalStroke(ctx, roof, { seed:401, width:5.5 });
+
+    // Artist dynamically painting the sky!
+    drawArtist(ctx, t, W*0.38, roofY-4, 1.18, 'paint', 1, 42);
+
+    // Sprite dipping and splashing colors!
+    drawBeanieSprite(ctx, t, W*0.52, roofY-8, 0.98, 'splash', 88);
+
+    // Dog resting peacefully
+    drawDog(ctx, t, W*0.68, roofY-4, 1.0, 120);
+
+    // Swirling charcoal and watercolor particles in the dawn wind
+    for(let i=0; i<20; i++){
+      const px = (W*0.25 + i*48 + Math.sin(t*1.4+i)*40) % W;
+      const py = (roofY - 110 - i*20 - t*16) % (H*0.85);
+      const color = i%3===0 ? GOLD : (i%3===1 ? CYAN : TERRACOTTA);
+      dot(ctx, px, py, 4.0, color, 0.85);
+    }
+  }
+
+  ctx.restore(); // Restore Camera
+};
+
+/* ---------- Interactive live preview ---------- */
+const params = new URLSearchParams(location.search);
+if(params.has('live')){
+  const t0 = performance.now();
+  (function loop(){
+    const t = ((performance.now() - t0) / 1000) % TOTAL_DUR;
+    window.__seek(t);
+    requestAnimationFrame(loop);
+  })();
+} else {
+  window.__seek(0.01);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The Heist of Ink — Cinematic Multi-Shot Animated Film</title>
+<style>
+  html,body{margin:0;padding:0;background:#0d0b0a;height:100%;overflow:hidden;display:flex;align-items:center;justify-content:center}
+  canvas{display:block;box-shadow:0 0 40px rgba(0,0,0,0.8)}
+</style>
+</head>
+<body>
+<canvas id="cv" width="1280" height="720"></canvas>
+<script>
+'use strict';
+/* ============================================================
+ * The Heist of Ink (墨水大劫案) — 30-Second Cinematic Animated Film
+ *
+ * Real Cinematic Film Language (8 Discrete Hard-Cut Shots):
+ *
+ * Shot 1 [0.0s - 3.2s]: [ECU Macro] The Scratching Charcoal
+ *   Macro extreme close-up of charcoal stick grinding on paper. Graphite dust flying.
+ * Shot 2 [3.2s - 6.5s]: [Top-Down Flat Lay] The Doodle Comes to Life
+ *   Over-the-sketchbook view. The 2D Mannay face draws itself, blinks, peels up off the page!
+ * Shot 3 [6.5s - 9.0s]: [Action Cut & Splatter] The Desk Heist
+ *   Low-angle. Sprite kicks ink jar, catches it, ink splashes towards camera! Shocked artist face!
+ * Shot 4 [9.0s - 14.5s]: [Dutch Angle Tracking] High-Speed City Chase
+ *   Tilted dynamic camera tracking the wild chase past flickering lamps, parallax towers & barking dog.
+ * Shot 5 [14.5s - 18.5s]: [Vertigo Angle] The Clock Hand Abyss
+ *   High-angle looking down past the sprite's trembling feet to the dizzy street below. Cornered!
+ * Shot 6 [18.5s - 22.0s]: [Over-the-Shoulder OTS] The Peace Offering
+ *   From Sprite's POV looking up at artist. Artist gently kneels, opens hand with steaming croissant.
+ * Shot 7 [22.0s - 25.5s]: [Emotional ECU] The Bite & Forgiveness
+ *   Sprite sniffs, eyes turn to golden stars, munches with crumbs flying, hands back the ink bottle.
+ * Shot 8 [25.5s - 30.0s]: [Grand Horizon CinemaScope] Painting the Sunrise
+ *   2.39:1 Epic Wide. Artist & Sprite on rooftop splash vibrant coral, gold & cyan watercolor across the dawn.
+ * ============================================================ */
+
+function mulberry32(seed){
+  let a = seed >>> 0;
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+class RNG {
+  constructor(seed){ this.f = mulberry32(seed); }
+  next(){ return this.f(); }
+  range(a,b){ return a + (b-a)*this.f(); }
+  int(a,b){ return Math.floor(this.range(a, b+1)); }
+  pick(arr){ return arr[Math.floor(this.f()*arr.length)]; }
+  chance(p){ return this.f() < p; }
+}
+
+function makeNoise1D(seed){
+  const rng = mulberry32(seed);
+  const N = 128, table = new Float32Array(N*2);
+  for(let i=0;i<N;i++) table[i] = rng()*2-1;
+  for(let i=0;i<N;i++) table[N+i] = table[i];
+  return function(t){
+    const i = Math.floor(t), f = t - i;
+    const u = f*f*(3-2*f);
+    return table[i%N] + (table[(i+1)%N] - table[i%N]) * u;
+  };
+}
+
+const clamp01 = x => Math.max(0, Math.min(1, x));
+const smooth = x => { x = clamp01(x); return x*x*(3-2*x); };
+const easeInOut = x => { x = clamp01(x); return x<0.5 ? 2*x*x : 1-Math.pow(-2*x+2,2)/2; };
+const easeOutBack = x => { const c=1.70158; x = clamp01(x); return 1 + (c+1)*Math.pow(x-1,3) + c*Math.pow(x-1,2); };
+
+/* ---------- Colors ---------- */
+const CHARCOAL = '#221e1b';
+const INK_BLACK = '#110f0e';
+const PAPER_WARM = '#ebe3d5';
+const PAPER_DARK = '#2d2722';
+const TERRACOTTA = '#e07a6f';
+const SAGE = '#5c7862';
+const GOLD = '#f7ba3e';
+const CYAN = '#4daec4';
+
+/* ---------- Render Primitives ---------- */
+function subdivide(pts, step=6){
+  if(pts.length < 2) return pts.slice();
+  const out = [pts[0].slice()];
+  for(let i=1;i<pts.length;i++){
+    const [x0,y0] = pts[i-1], [x1,y1] = pts[i];
+    const d = Math.hypot(x1-x0, y1-y0);
+    const n = Math.max(1, Math.round(d/step));
+    for(let k=1;k<=n;k++){
+      const u = k/n;
+      out.push([x0+(x1-x0)*u, y0+(y1-y0)*u]);
+    }
+  }
+  return out;
+}
+
+function wobblePts(pts, seed, mag=1.4, close=false){
+  const nx = makeNoise1D(seed), ny = makeNoise1D(seed+101);
+  return pts.map((p,i)=>{
+    let dx = nx(i*0.38)*mag, dy = ny(i*0.38)*mag;
+    if(close && (i===0 || i===pts.length-1)){ dx = nx(0)*mag; dy = ny(0)*mag; }
+    return [p[0]+dx, p[1]+dy];
+  });
+}
+
+function pathFrom(pts, close=false){
+  const p = new Path2D();
+  if(!pts.length) return p;
+  p.moveTo(pts[0][0], pts[0][1]);
+  for(let i=1;i<pts.length;i++) p.lineTo(pts[i][0], pts[i][1]);
+  if(close) p.closePath();
+  return p;
+}
+
+function charcoalStroke(ctx, pts, o={}){
+  if(pts.length < 2) return;
+  const seed = o.seed ?? 1;
+  const sub = subdivide(pts, o.step ?? 6);
+  const baseW = o.width ?? 3.2;
+  const alpha = o.alpha ?? 0.9;
+  const color = o.color ?? CHARCOAL;
+  const close = o.close ?? false;
+
+  ctx.save();
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.strokeStyle = color;
+
+  const wp1 = wobblePts(sub, seed, o.wobble ?? 1.3, close);
+  ctx.globalAlpha *= alpha;
+  ctx.lineWidth = baseW;
+  ctx.stroke(pathFrom(wp1, close));
+
+  const wp2 = wobblePts(sub, seed + 9187, (o.wobble ?? 1.3)*1.35, close);
+  ctx.globalAlpha *= 0.45;
+  ctx.lineWidth = baseW * 0.65;
+  ctx.stroke(pathFrom(wp2, close));
+
+  ctx.restore();
+}
+
+const roughStroke = charcoalStroke;
+
+function offsetWash(ctx, pts, color, o={}){
+  const seed = o.seed ?? 1;
+  const rng = mulberry32(seed);
+  const ox = (rng() - 0.5) * (o.offset ?? 8);
+  const oy = (rng() - 0.5) * (o.offset ?? 8);
+  const sub = subdivide(pts, 8);
+  const wp = wobblePts(sub, seed + 311, o.wobble ?? 2.0, true).map(p => [p[0] + ox, p[1] + oy]);
+
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.globalAlpha *= o.alpha ?? 0.35;
+  ctx.fill(pathFrom(wp, true));
+  ctx.restore();
+}
+
+function shape(ctx, pts, o={}){
+  if(o.fill) offsetWash(ctx, pts, o.fill, o);
+  charcoalStroke(ctx, pts, { ...o, close:true });
+}
+
+function ellipsePts(cx, cy, rx, ry, n=20, rot=0){
+  const pts=[];
+  for(let i=0;i<n;i++){
+    const a = i/n*Math.PI*2;
+    const x = Math.cos(a)*rx, y = Math.sin(a)*ry;
+    pts.push([cx + x*Math.cos(rot)-y*Math.sin(rot), cy + x*Math.sin(rot)+y*Math.cos(rot)]);
+  }
+  return pts;
+}
+
+function arcPts(cx, cy, r, a0, a1, n=12){
+  const pts = [];
+  for(let i=0;i<=n;i++){
+    const a = a0 + (a1-a0)*i/n;
+    pts.push([cx + Math.cos(a)*r, cy + Math.sin(a)*r]);
+  }
+  return pts;
+}
+
+function dot(ctx, x, y, r, color=CHARCOAL, alpha=0.85){
+  ctx.save();
+  ctx.globalAlpha *= alpha; ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function charcoalSmudge(ctx, cx, cy, rx, ry, seed, alpha=0.75){
+  ctx.save();
+  const rng = mulberry32(seed);
+  ctx.fillStyle = CHARCOAL;
+  for(let pass=0; pass<3; pass++){
+    const prx = rx * (0.85 + (rng()-0.5)*0.3);
+    const pry = ry * (0.85 + (rng()-0.5)*0.3);
+    const pts = ellipsePts(cx + (rng()-0.5)*3, cy + (rng()-0.5)*3, prx, pry, 14);
+    const wp = wobblePts(pts, seed + pass*107, 1.8, true);
+    ctx.globalAlpha = (alpha / 3) * (1.1 - pass*0.1);
+    ctx.fill(pathFrom(wp, true));
+  }
+  ctx.restore();
+}
+
+function makePaper(w, h, seed){
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = PAPER_WARM;
+  ctx.fillRect(0,0,w,h);
+
+  const rng = mulberry32(seed);
+  for(let i=0;i<8;i++){
+    const x = rng()*w, y = rng()*h, r = 180 + rng()*320;
+    const g = ctx.createRadialGradient(x,y,0,x,y,r);
+    g.addColorStop(0, 'rgba(215,198,170,0.25)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x-r,y-r,r*2,r*2);
+  }
+  const img = ctx.getImageData(0,0,w,h);
+  const d = img.data;
+  const n2 = makeNoise1D(seed+88);
+  let idx = 0;
+  for(let y=0;y<h;y++){
+    const rowMottle = n2(y*0.08)*2.5;
+    for(let x=0;x<w;x++){
+      const noise = rowMottle + n2(x*0.015 + y*0.019)*3.5 + (rng()-0.5)*8;
+      d[idx]   = Math.max(0, Math.min(255, d[idx]   + noise));
+      d[idx+1] = Math.max(0, Math.min(255, d[idx+1] + noise));
+      d[idx+2] = Math.max(0, Math.min(255, d[idx+2] + noise*0.85));
+      idx += 4;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+
+  const v = ctx.createRadialGradient(w/2, h/2, Math.min(w,h)*0.38, w/2, h/2, Math.max(w,h)*0.78);
+  v.addColorStop(0, 'rgba(0,0,0,0)');
+  v.addColorStop(1, 'rgba(70,55,40,0.22)');
+  ctx.fillStyle = v;
+  ctx.fillRect(0,0,w,h);
+  return cv;
+}
+
+/* ============================================================
+ * 8 DISCRETE CINEMATIC SHOT DIRECTORS
+ * ============================================================ */
+
+const canvas = document.getElementById('cv');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const TOTAL_DUR = 30.0;
+const PAPER = makePaper(W, H, 13579);
+
+/* ---------- SHOT 1 [0.0s - 3.2s]: Extreme Close-Up Charcoal Friction ---------- */
+function renderShot1(ctx, tRel, dur){
+  // Camera macro slow pan
+  const u = tRel / dur;
+  ctx.save();
+  ctx.drawImage(PAPER, 0, 0);
+
+  // Vignette lighting
+  const g = ctx.createRadialGradient(W*0.5, H*0.5, 80, W*0.5, H*0.5, 600);
+  g.addColorStop(0, 'rgba(255,248,230,0.18)');
+  g.addColorStop(1, 'rgba(20,15,10,0.75)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,W,H);
+
+  // Drawn intense sketch lines on paper
+  const lineProgress = Math.min(1, u * 1.3);
+  for(let i=0; i<18; i++){
+    const lx = 200 + i*45;
+    const ly0 = 150 + (i%3)*40;
+    const ly1 = 550 - (i%2)*30;
+    charcoalStroke(ctx, [[lx, ly0], [lx + 60, (ly0+ly1)/2], [lx - 30, ly1]], { seed:100+i, width:4.5, alpha:0.85 });
+  }
+
+  // Giant Macro Charcoal Stick Grinding
+  const stickX = 400 + u * 450;
+  const stickY = 320 + Math.sin(u * 25) * 45;
+  ctx.save();
+  ctx.translate(stickX, stickY);
+  ctx.rotate(-0.65 + Math.sin(u*30)*0.08);
+
+  // Charcoal stick body
+  shape(ctx, [[-20, -320], [20, -320], [14, 0], [-14, 0]], { seed:200, fill:CHARCOAL, width:5 });
+  // Worn charcoal chisel tip
+  shape(ctx, [[-14, 0], [14, 0], [0, 24]], { seed:201, fill:'#110f0e', width:4 });
+  ctx.restore();
+
+  // Intense flying charcoal dust particles
+  const rngD = new RNG(Math.floor(tRel * 60));
+  for(let k=0; k<25; k++){
+    const px = stickX + rngD.range(-40, 40) + rngD.range(-80, 80)*(k/25);
+    const py = stickY + rngD.range(-20, 20) + rngD.range(-60, 60)*(k/25);
+    dot(ctx, px, py, rngD.range(1.5, 4.5), CHARCOAL, rngD.range(0.5, 0.95));
+  }
+
+  // Cinema Letterbox Bars
+  drawCinemascope(ctx, W, H);
+  ctx.restore();
+}
+
+/* ---------- SHOT 2 [3.2s - 6.5s]: Top-Down Sketchbook Flat Lay - Sprite Awaking ---------- */
+function renderShot2(ctx, tRel, dur){
+  const u = tRel / dur;
+  ctx.save();
+  ctx.drawImage(PAPER, 0, 0);
+
+  // Wooden desk surface
+  ctx.fillStyle = '#423326';
+  ctx.fillRect(0,0,W,H);
+
+  // White Sketchbook open flat
+  const bookX = W*0.5, bookY = H*0.5;
+  const pagePts = [[bookX-340, bookY-240], [bookX+340, bookY-240], [bookX+340, bookY+240], [bookX-340, bookY+240]];
+  offsetWash(ctx, pagePts, '#fdfbf6', { seed:300, alpha:0.96, offset:0 });
+  charcoalStroke(ctx, pagePts, { seed:301, width:4, close:true });
+  // Center spine binding
+  charcoalStroke(ctx, [[bookX, bookY-240], [bookX, bookY+240]], { seed:302, width:3.5, color:'#8a7865' });
+
+  // Glass Ink Jar standing on top-right page
+  drawInkJarProp(ctx, bookX+220, bookY-130, 1.2, false, 310);
+
+  // The 2D Face on Left Page:
+  // 0-1.5s: Drawing completes & blinks
+  // 1.5-3.3s: 2D limbs stretch, peeling off into 3D relief!
+  const peelU = clamp01((u - 0.45) / 0.55);
+  const spriteX = bookX - 160 + peelU * 220;
+  const spriteY = bookY + 40 - Math.sin(peelU * Math.PI) * 120;
+  const popScale = 1.0 + peelU * 0.4;
+
+  ctx.save();
+  ctx.translate(spriteX, spriteY);
+  ctx.scale(popScale, popScale);
+
+  // Shadow under peeling sprite
+  if(peelU > 0.1){
+    dot(ctx, 0, 30, 28*peelU, 'rgba(0,0,0,0.35)');
+  }
+
+  // Draw Mannay Beanie Face
+  const R = 32;
+  const bodyPts = ellipsePts(0, 0, R*0.9, R*1.05, 16);
+  offsetWash(ctx, bodyPts, '#d9b89b', { seed:320, alpha:0.65 });
+  charcoalStroke(ctx, bodyPts, { seed:321, width:3.6, close:true });
+
+  // Beanie
+  const cap = arcPts(0, -R*0.5, R*0.95, Math.PI*0.95, Math.PI*2.05, 12).concat([[R*0.85,-R*0.5],[-R*0.85,-R*0.5]]);
+  offsetWash(ctx, cap, SAGE, { seed:322, alpha:0.75 });
+  charcoalStroke(ctx, cap, { seed:323, width:3.2, close:true });
+
+  // Dark eye patch & blinking right eye
+  charcoalSmudge(ctx, -10, 0, 9, 8, 324, 0.95);
+  const blink = u < 0.3 ? (Math.sin(u*20) > 0.5) : false;
+  if(blink){
+    charcoalStroke(ctx, [[6, 0], [16, 0]], { seed:325, width:3 });
+  } else {
+    dot(ctx, 11, 0, 3.2, CHARCOAL, 1);
+  }
+
+  // Smirking mouth
+  charcoalStroke(ctx, [[-6, 14], [10, 10]], { seed:326, width:2.8 });
+
+  // Reaching arms
+  if(peelU > 0.2){
+    charcoalStroke(ctx, [[-15, 6], [-28, -12], [-35, -28]], { seed:327, width:3.4 });
+    charcoalStroke(ctx, [[15, 6], [32, -8], [42, -22]], { seed:328, width:3.4 });
+  }
+  ctx.restore();
+
+  drawCinemascope(ctx, W, H);
+  ctx.restore();
+}
+
+/* ---------- SHOT 3 [6.5s - 9.0s]: Low-Angle Action Heist & Lens Splatter ---------- */
+function renderShot3(ctx, tRel, dur){
+  const u = tRel / dur;
+  ctx.save();
+  ctx.drawImage(PAPER, 0, 0);
+
+  const floorY = H * 0.75;
+  charcoalStroke(ctx, [[-100, floorY], [W+100, floorY]], { seed:400, width:5 });
+
+  // Shocked Artist in Mid-Shot (Left Frame)
+  const artistX = W * 0.28, artistY = floorY - 10;
+  drawArtistFull(ctx, tRel, artistX, artistY, 1.45, 'shock', 1, 42);
+
+  // Leaping Sprite in Mid-Air grabbing jar (Right Frame)
+  const leapU = easeInOut(u);
+  const sx = W*0.52 + leapU * 380;
+  const sy = floorY - 120 - Math.sin(u*Math.PI)*140;
+  drawSpriteFull(ctx, tRel, sx, sy, 1.25, 'carryJar', 88);
+
+  // Massive Ink Splatter flying towards camera lens!
+  const splatU = clamp01((u - 0.25) / 0.75);
+  if(splatU > 0){
+    const rngS = new RNG(450);
+    for(let i=0; i<18; i++){
+      const ang = rngS.range(0, Math.PI*2);
+      const dist = splatU * rngS.range(120, 520);
+      const rad = rngS.range(6, 26) * (0.4 + splatU*0.8);
+      const px = W*0.65 + Math.cos(ang)*dist;
+      const py = H*0.45 + Math.sin(ang)*dist;
+      dot(ctx, px, py, rad, INK_BLACK, 0.92);
+    }
+  }
+
+  drawCinemascope(ctx, W, H);
+  ctx.restore();
+}
+
+/* ---------- SHOT 4 [9.0s - 14.5s]: Dutch-Angle Fast Tracking City Chase ---------- */
+function renderShot4(ctx, tRel, dur){
+  const u = tRel / dur;
+  ctx.save();
+
+  // Tilted Dutch Angle Camera
+  ctx.translate(W/2, H/2);
+  ctx.rotate(-0.06);
+  ctx.translate(-W/2, -H/2);
+
+  ctx.drawImage(PAPER, 0, 0);
+  const floorY = H * 0.82;
+
+  // Multi-layer Parallax Buildings scrolling fast!
+  const scroll = tRel * 520;
+  for(let i=0; i<12; i++){
+    const bx = ((i*240 - scroll*0.6) % (W + 600)) - 200;
+    const bw = 180, bh = 280 + (i%4)*70;
+    const pts = [[bx, floorY], [bx, floorY-bh], [bx+bw, floorY-bh], [bx+bw, floorY]];
+    offsetWash(ctx, pts, '#d2c5b4', { seed:500+i, alpha:0.45 });
+    charcoalStroke(ctx, pts, { seed:501+i, width:3.2 });
+    // Lit yellow windows passing
+    for(let r=0; r<3; r++){
+      const wx = bx + 40, wy = floorY - bh + 50 + r*65;
+      shape(ctx, [[wx, wy], [wx+40, wy], [wx+40, wy+35], [wx, wy+35]], { seed:510+i*5+r, fill:GOLD, width:2, alpha:0.75 });
+    }
+  }
+
+  // Street Floor
+  charcoalStroke(ctx, [[-200, floorY], [W+200, floorY]], { seed:520, width:5.5 });
+
+  // Flickering Street Lamp
+  const lampX = ((W*0.6 - scroll) % (W+400)) - 100;
+  charcoalStroke(ctx, [[lampX, floorY], [lampX, floorY-280], [lampX+50, floorY-300]], { seed:530, width:4.5 });
+  dot(ctx, lampX+50, floorY-295, 16, GOLD, 0.9);
+
+  // Running Street Dog barking
+  drawDogFull(ctx, tRel, W*0.18, floorY-4, 1.1, 120);
+
+  // Sprite sprinting ahead
+  drawSpriteFull(ctx, tRel, W*0.75, floorY-6, 1.25, 'runWithSpill', 88);
+
+  // Artist sprinting in hot pursuit
+  drawArtistFull(ctx, tRel, W*0.42, floorY-6, 1.45, 'run', 1, 42);
+
+  // Continuous trail of jet-black ink puddles
+  for(let k=0; k<14; k++){
+    const px = ((k*110 - scroll) % (W+300)) - 100;
+    dot(ctx, px, floorY+2, 6+(k%3)*3, INK_BLACK, 0.9);
+  }
+
+  drawCinemascope(ctx, W, H);
+  ctx.restore();
+}
+
+/* ---------- SHOT 5 [14.5s - 18.5s]: Vertigo High-Angle Clock Hand Standoff ---------- */
+function renderShot5(ctx, tRel, dur){
+  const u = tRel / dur;
+  ctx.save();
+  ctx.drawImage(PAPER, 0, 0);
+
+  // Vertigo downward perspective: Giant Clock Face & Tiny Street Below
+  const clockCX = W * 0.40, clockCY = H * 0.45;
+  const clockR = 240;
+
+  // Giant Clock Dial
+  const dial = ellipsePts(clockCX, clockCY, clockR, clockR, 32);
+  offsetWash(ctx, dial, '#fcf7ec', { seed:600, alpha:0.85 });
+  charcoalStroke(ctx, dial, { seed:601, width:6, close:true });
+
+  // Roman Numerals
+  for(let h=0; h<12; h++){
+    const ang = (h/12)*Math.PI*2 - Math.PI/2;
+    const x0 = clockCX + Math.cos(ang)*(clockR-35), y0 = clockCY + Math.sin(ang)*(clockR-35);
+    const x1 = clockCX + Math.cos(ang)*(clockR-12), y1 = clockCY + Math.sin(ang)*(clockR-12);
+    charcoalStroke(ctx, [[x0,y0],[x1,y1]], { seed:610+h, width:4 });
+  }
+
+  // The Long Minute Hand extending over the street abyss
+  const handAngle = -0.35;
+  const handLen = 220;
+  const tipX = clockCX + Math.cos(handAngle)*handLen;
+  const tipY = clockCY + Math.sin(handAngle)*handLen;
+  charcoalStroke(ctx, [[clockCX, clockCY], [tipX, tipY]], { seed:620, width:9, color:CHARCOAL });
+
+  // Tiny streets and rooftops far below
+  for(let r=0; r<6; r++){
+    const rx = W*0.65 + r*55, ry = H*0.65 + r*25;
+    shape(ctx, [[rx, ry], [rx+40, ry], [rx+35, ry+80], [rx-5, ry+80]], { seed:630+r, fill:'#8a7562', width:2, alpha:0.4 });
+  }
+
+  // Shivering Sprite trapped at the needle tip clutching ink
+  const shiver = Math.sin(tRel * 40) * 2;
+  drawSpriteFull(ctx, tRel, tipX + shiver, tipY - 14, 1.15, 'trapped', 88);
+
+  // Artist climbing onto clock base (Left)
+  drawArtistFull(ctx, tRel, clockCX - 40, clockCY + 40, 1.35, 'climb', 1, 42);
+
+  drawCinemascope(ctx, W, H);
+  ctx.restore();
+}
+
+/* ---------- SHOT 6 [18.5s - 22.0s]: Over-The-Shoulder (OTS) The Peace Offering ---------- */
+function renderShot6(ctx, tRel, dur){
+  const u = tRel / dur;
+  ctx.save();
+  ctx.drawImage(PAPER, 0, 0);
+
+  // OTS Framing: Silhouette of Sprite's head in foreground left
+  const spSilhouette = ellipsePts(W*0.18, H*0.65, 75, 85, 16);
+  shape(ctx, spSilhouette, { seed:700, fill:CHARCOAL, width:5 });
+
+  // Artist kneeling gently in mid-ground center (Gentle smile)
+  const artistX = W * 0.62, artistY = H * 0.72;
+  drawArtistFull(ctx, tRel, artistX, artistY, 1.65, 'offer', -1, 42);
+
+  // Glowing Steaming Croissant held out towards camera/sprite
+  drawCroissantProp(ctx, artistX - 110, artistY - 95, 1.45, true, 710);
+
+  // Warm Golden Light aura spilling from the croissant
+  const glow = 0.7 + 0.3*Math.sin(tRel*5);
+  dot(ctx, artistX - 110, artistY - 95, 65*glow, GOLD, 0.35);
+
+  drawCinemascope(ctx, W, H);
+  ctx.restore();
+}
+
+/* ---------- SHOT 7 [22.0s - 25.5s]: Close-Up Feast & Heart Connection ---------- */
+function renderShot7(ctx, tRel, dur){
+  const u = tRel / dur;
+  ctx.save();
+  ctx.drawImage(PAPER, 0, 0);
+
+  // Close-up of Sprite's joyful face
+  const cx = W * 0.45, cy = H * 0.50;
+  const R = 85;
+
+  // Face
+  const body = ellipsePts(cx, cy, R*0.95, R*1.05, 20);
+  offsetWash(ctx, body, '#d9b89b', { seed:800, alpha:0.75 });
+  charcoalStroke(ctx, body, { seed:801, width:5, close:true });
+
+  // Sage Beanie
+  const cap = arcPts(cx, cy-R*0.45, R*0.95, Math.PI*0.95, Math.PI*2.05, 14).concat([[cx+R*0.85,cy-R*0.45],[cx-R*0.85,cy-R*0.45]]);
+  offsetWash(ctx, cap, SAGE, { seed:802, alpha:0.85 });
+  charcoalStroke(ctx, cap, { seed:803, width:4.5, close:true });
+
+  // Dark Eye Patch (Left)
+  charcoalSmudge(ctx, cx-R*0.35, cy-R*0.08, 22, 20, 804, 0.95);
+
+  // Star Eyes (Right) Sparkling!
+  const starCX = cx + R*0.35, starCY = cy - R*0.08;
+  const starPulse = 18 + Math.sin(tRel*10)*5;
+  charcoalStroke(ctx, [[starCX, starCY-starPulse], [starCX, starCY+starPulse]], { seed:805, width:4.5, color:GOLD });
+  charcoalStroke(ctx, [[starCX-starPulse, starCY], [starCX+starPulse, starCY]], { seed:806, width:4.5, color:GOLD });
+  dot(ctx, starCX, starCY, 6, '#fff', 1);
+
+  // Chewing Croissant & Crumbs
+  const chew = Math.abs(Math.sin(tRel*14))*10;
+  shape(ctx, ellipsePts(cx, cy+R*0.38, 22+chew, 15+chew, 12), { seed:810, fill:'#8a342b', width:3.5 });
+  drawCroissantProp(ctx, cx-10, cy+R*0.38, 1.1, false, 811);
+
+  // Flying golden pastry crumbs
+  const rngC = new RNG(Math.floor(tRel*30));
+  for(let k=0; k<12; k++){
+    dot(ctx, cx + rngC.range(-60, 60), cy + R*0.38 + rngC.range(-30, 40), rngC.range(2, 5), GOLD, 0.9);
+  }
+
+  // Huge Heart Emote
+  const heartScale = 0.85 + 0.15*Math.sin(tRel*6);
+  dot(ctx, W*0.78, H*0.32, 24*heartScale, TERRACOTTA, 0.95);
+  dot(ctx, W*0.84, H*0.32, 24*heartScale, TERRACOTTA, 0.95);
+  charcoalStroke(ctx, [[W*0.73, H*0.32], [W*0.81, H*0.42], [W*0.89, H*0.32]], { seed:820, width:4 });
+
+  drawCinemascope(ctx, W, H);
+  ctx.restore();
+}
+
+/* ---------- SHOT 8 [25.5s - 30.0s]: Grand CinemaScope Skyline - Painting the Sunrise ---------- */
+function renderShot8(ctx, tRel, dur){
+  const u = tRel / dur;
+  ctx.save();
+  ctx.drawImage(PAPER, 0, 0);
+
+  const roofY = H * 0.74;
+
+  // Rising Sun Horizon
+  const sunX = W * 0.82, sunY = H * 0.32;
+  dot(ctx, sunX, sunY, 65, GOLD, 0.95);
+  dot(ctx, sunX, sunY, 180, '#ff9e3b', 0.45*u);
+  dot(ctx, sunX, sunY, 350, '#ff6e3b', 0.22*u);
+
+  // Dynamic Watercolor Splatters Blooming Across the City!
+  const splashes = [
+    [W*0.15, H*0.38, 130, CYAN, 0.55],
+    [W*0.34, H*0.48, 150, TERRACOTTA, 0.6],
+    [W*0.58, H*0.42, 170, GOLD, 0.65],
+    [W*0.82, H*0.50, 140, SAGE, 0.55]
+  ];
+  splashes.forEach(([sx, sy, sr, sc, sa], idx)=>{
+    const growR = sr * Math.min(1, u * 1.6);
+    offsetWash(ctx, ellipsePts(sx, sy, growR, growR*0.75, 18), sc, { seed:900+idx, alpha:sa*u, offset:15 });
+  });
+
+  // Rooftop Architecture
+  const roof = [
+    [-100, roofY+100],
+    [W*0.08, roofY],
+    [W*0.92, roofY],
+    [W+100, roofY+100],
+    [W+100, H+100],
+    [-100, H+100]
+  ];
+  offsetWash(ctx, roof, '#2f2824', { seed:910, alpha:0.95 });
+  charcoalStroke(ctx, roof, { seed:911, width:6 });
+
+  // Artist & Sprite actively painting the sky!
+  drawArtistFull(ctx, tRel, W*0.35, roofY-4, 1.25, 'paint', 1, 42);
+  drawSpriteFull(ctx, tRel, W*0.50, roofY-8, 1.05, 'splash', 88);
+  drawDogFull(ctx, tRel, W*0.68, roofY-4, 1.05, 120);
+
+  // Swirling Charcoal and Watercolor Wind Particles
+  for(let i=0; i<30; i++){
+    const px = (W*0.15 + i*42 + Math.sin(tRel*1.8+i)*50) % W;
+    const py = (roofY - 140 - i*16 - tRel*22) % (H*0.85);
+    const color = i%3===0 ? GOLD : (i%3===1 ? CYAN : TERRACOTTA);
+    dot(ctx, px, py, 4.5, color, 0.9);
+  }
+
+  drawCinemascope(ctx, W, H);
+  ctx.restore();
+}
+
+/* ---------- CinemaScope 2.39:1 Letterbox Bars ---------- */
+function drawCinemascope(ctx, W, H){
+  const barH = 44;
+  ctx.save();
+  ctx.fillStyle = '#0a0807';
+  ctx.fillRect(0, 0, W, barH);
+  ctx.fillRect(0, H - barH, W, barH);
+  // Gold framing hairline
+  charcoalStroke(ctx, [[0, barH], [W, barH]], { seed:990, width:1.5, color:'#4a3d32', alpha:0.7 });
+  charcoalStroke(ctx, [[0, H-barH], [W, H-barH]], { seed:991, width:1.5, color:'#4a3d32', alpha:0.7 });
+  ctx.restore();
+}
+
+/* ============================================================
+ * Helper Props & Actor Model Implementations
+ * ============================================================ */
+
+function drawInkJarProp(ctx, x, y, scale=1, isSplashing=false, seed=99){
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+  const s = seed;
+  const jarPts = [[-14, -28], [14, -28], [18, 0], [-18, 0]];
+  shape(ctx, jarPts, { seed:s, fill:'#181412', width:3.0, close:true });
+  shape(ctx, [[-7, -36], [7, -36], [7, -28], [-7, -28]], { seed:s+1, fill:'#c29a5b', width:2.4, close:true });
+  roughStroke(ctx, [[-9, -24], [-12, -4]], { seed:s+3, width:1.8, color:'#ffffff', alpha:0.8 });
+  ctx.restore();
+}
+
+function drawCroissantProp(ctx, x, y, scale=1, withSteam=true, seed=150){
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+  const s = seed;
+  const cPts = [[-22, 4], [-14, -16], [0, -20], [14, -16], [22, 4], [12, -4], [0, -9], [-12, -4]];
+  shape(ctx, cPts, { seed:s, fill:GOLD, width:3.0, close:true });
+  charcoalStroke(ctx, [[-9, -18], [-7, 0]], { seed:s+1, width:2.2 });
+  charcoalStroke(ctx, [[0, -20], [0, -3]], { seed:s+2, width:2.2 });
+  charcoalStroke(ctx, [[9, -18], [7, 0]], { seed:s+3, width:2.2 });
+
+  if(withSteam){
+    for(let k=0; k<3; k++){
+      const stU = ((Date.now()*0.0015 + k*0.33) % 1);
+      const sx = (k-1)*12;
+      const sy = -24 - stU*35;
+      roughStroke(ctx, [[sx, sy], [sx+Math.sin(stU*6)*6, sy-10], [sx-Math.sin(stU*6)*6, sy-20]], { seed:s+10+k, width:2.5, color:'#fff', alpha:0.75*(1-stU) });
+    }
+  }
+  ctx.restore();
+}
+
+function drawArtistFull(ctx, t, x, y, scale=1, action='sketch', lookDir=1, seed=42){
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale * lookDir, scale);
+
+  const s = seed;
+  const R = 36;
+  const isRunning = action === 'run';
+  const isShocked = action === 'shock';
+  const isPainting = action === 'paint';
+  const isOffering = action === 'offer';
+
+  const phase = t * (isRunning ? 14 : 2);
+  const hop = isRunning ? -Math.abs(Math.sin(phase))*16 : (isShocked ? -24 : 0);
+  ctx.translate(0, hop);
+
+  const hipY = -32, shoulderY = -90, torsoW = 26;
+
+  // Legs
+  if(isRunning){
+    const stride = 28;
+    for(const side of [-1, 1]){
+      const ph = phase + (side < 0 ? Math.PI : 0);
+      const fx = Math.sin(ph)*stride, fy = -Math.max(0, Math.cos(ph))*18;
+      charcoalStroke(ctx, [[0, hipY], [fx*0.5, hipY+20], [fx, fy]], { seed:s+side*10, width:3.4 });
+      charcoalStroke(ctx, [[fx, fy], [fx+10, fy]], { seed:s+side*11, width:3.4 });
+    }
+  } else {
+    charcoalStroke(ctx, [[-10, hipY], [-10, 0], [-4, 0]], { seed:s+10, width:3.4 });
+    charcoalStroke(ctx, [[10, hipY], [10, 0], [16, 0]], { seed:s+11, width:3.4 });
+  }
+
+  // Coat
+  const coatPts = [[-torsoW*0.9, shoulderY], [torsoW*0.9, shoulderY], [torsoW*1.15, hipY+10], [-torsoW*1.15, hipY+10]];
+  offsetWash(ctx, coatPts, '#6e5d4f', { seed:s+15, alpha:0.5 });
+  charcoalStroke(ctx, coatPts, { seed:s+16, width:3.6, close:true });
+
+  // Arms
+  if(isOffering){
+    charcoalStroke(ctx, [[-torsoW*0.8, shoulderY+8], [0, shoulderY+35]], { seed:s+20, width:3.0 });
+    charcoalStroke(ctx, [[torsoW*0.8, shoulderY+8], [torsoW*1.5, shoulderY+20], [torsoW*2.2, shoulderY+18]], { seed:s+21, width:3.2 });
+  } else if(isPainting){
+    const brush = Math.sin(t*8)*25;
+    charcoalStroke(ctx, [[-torsoW*0.8, shoulderY+8], [0, shoulderY+40]], { seed:s+20, width:3.0 });
+    charcoalStroke(ctx, [[torsoW*0.8, shoulderY+8], [torsoW*1.5, shoulderY+10], [torsoW*2.1 + brush, shoulderY-24]], { seed:s+21, width:3.4 });
+  } else if(isRunning){
+    const armSw = Math.sin(phase)*30;
+    charcoalStroke(ctx, [[-torsoW*0.8, shoulderY+8], [-torsoW*1.4 - armSw, shoulderY+20]], { seed:s+20, width:3.2 });
+    charcoalStroke(ctx, [[torsoW*0.8, shoulderY+8], [torsoW*1.4 + armSw, shoulderY+20]], { seed:s+21, width:3.2 });
+  }
+
+  // Head
+  const headCY = shoulderY - R*0.85;
+  offsetWash(ctx, ellipsePts(-R*0.5, headCY+R*0.2, R*0.35, R*0.25, 10), TERRACOTTA, { seed:s+30, alpha:0.45 });
+  offsetWash(ctx, ellipsePts(R*0.5, headCY+R*0.2, R*0.35, R*0.25, 10), TERRACOTTA, { seed:s+31, alpha:0.45 });
+  charcoalStroke(ctx, ellipsePts(0, headCY, R*0.95, R*1.05, 20), { seed:s+32, width:3.6, close:true });
+
+  // Curly Hair
+  const rngH = new RNG(s^0x999);
+  for(let i=0; i<22; i++){
+    const u = (i/21)*2 - 1;
+    const cx = u * R * 0.88 + (rngH.next()-0.5)*10;
+    const cy = headCY - R*0.85 + Math.pow(u, 2)*R*0.25 + (rngH.next()-0.5)*10;
+    const loop = [];
+    for(let k=0; k<=10; k++){
+      const ang = (k/10)*Math.PI*2.4 + rngH.range(0, Math.PI);
+      loop.push([cx + Math.cos(ang)*8, cy + Math.sin(ang)*8]);
+    }
+    charcoalStroke(ctx, loop, { seed:s+100+i, width:1.8 });
+  }
+
+  // Glasses & Eyes
+  const eyeDX = R*0.42, eyeY = headCY - R*0.05;
+  charcoalStroke(ctx, ellipsePts(-eyeDX, eyeY, R*0.3, R*0.26, 12), { seed:s+50, width:3.2, close:true });
+  charcoalStroke(ctx, ellipsePts(eyeDX, eyeY, R*0.3, R*0.26, 12), { seed:s+51, width:3.2, close:true });
+  charcoalStroke(ctx, [[-eyeDX+R*0.26, eyeY], [eyeDX-R*0.26, eyeY]], { seed:s+52, width:3 });
+  dot(ctx, -eyeDX, eyeY, 2.4, CHARCOAL);
+  dot(ctx, eyeDX, eyeY, 2.4, CHARCOAL);
+  charcoalStroke(ctx, [[0, eyeY+6], [R*0.12, eyeY+16], [-R*0.08, eyeY+18]], { seed:s+55, width:2.5 });
+
+  ctx.restore();
+}
+
+function drawSpriteFull(ctx, t, x, y, scale=1, action='run', seed=88){
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+
+  const s = seed;
+  const R = 22;
+  const isRunning = action.startsWith('run');
+  const phase = t * (isRunning ? 16 : 4);
+  const hop = isRunning ? -Math.abs(Math.sin(phase))*12 : 0;
+  ctx.translate(0, hop);
+
+  // Legs
+  if(isRunning){
+    for(const side of [-1, 1]){
+      const ph = phase + (side < 0 ? Math.PI : 0);
+      charcoalStroke(ctx, [[side*5, -8], [Math.sin(ph)*15, -Math.max(0, Math.cos(ph))*10]], { seed:s+side*5, width:2.8 });
+    }
+  } else {
+    charcoalStroke(ctx, [[-5, -8], [-5, 0]], { seed:s+5, width:2.8 });
+    charcoalStroke(ctx, [[5, -8], [5, 0]], { seed:s+6, width:2.8 });
+  }
+
+  // Bean Body
+  const body = ellipsePts(0, -20, R*0.9, R*1.05, 14);
+  offsetWash(ctx, body, '#d9b89b', { seed:s+10, alpha:0.5 });
+  charcoalStroke(ctx, body, { seed:s+11, width:3.0, close:true });
+
+  // Beanie
+  const cap = arcPts(0, -30, R*0.92, Math.PI*0.95, Math.PI*2.05, 12).concat([[R*0.8,-30],[-R*0.8,-30]]);
+  offsetWash(ctx, cap, SAGE, { seed:s+15, alpha:0.75 });
+  charcoalStroke(ctx, cap, { seed:s+16, width:2.6, close:true });
+
+  // Eye Patch & Right Eye
+  charcoalSmudge(ctx, -7, -20, 7, 6, s+20, 0.95);
+  dot(ctx, 7, -20, 2.2, CHARCOAL);
+
+  // Arms carrying or splashing
+  if(action.includes('Jar') || action.includes('Spill')){
+    charcoalStroke(ctx, [[-10, -18], [0, -10]], { seed:s+30, width:2.4 });
+    charcoalStroke(ctx, [[10, -18], [5, -10]], { seed:s+31, width:2.4 });
+    drawInkJarProp(ctx, 10, -6, 0.8, action.includes('Spill'), s+32);
+  } else if(action === 'splash'){
+    const sp = Math.sin(t*8)*20;
+    charcoalStroke(ctx, [[-10, -18], [-16, -28]], { seed:s+30, width:2.6 });
+    charcoalStroke(ctx, [[10, -18], [20+sp, -26]], { seed:s+31, width:2.6 });
+    drawInkJarProp(ctx, -16, -25, 0.65, false, s+32);
+  }
+
+  ctx.restore();
+}
+
+function drawDogFull(ctx, t, x, y, scale=1, seed=120){
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+  const s = seed;
+  const wag = Math.sin(t*10)*0.35;
+  shape(ctx, ellipsePts(0, -14, 18, 11, 12), { seed:s, fill:'#cbb89d', width:2.4, close:true });
+  shape(ctx, ellipsePts(16, -24, 11, 9, 10), { seed:s+1, fill:'#cbb89d', width:2.2, close:true });
+  shape(ctx, ellipsePts(12, -20, 5, 10, 8, 0.3), { seed:s+2, fill:'#8a755d', width:2, close:true });
+  dot(ctx, 19, -26, 1.8, CHARCOAL, 1);
+  dot(ctx, 27, -23, 2.2, CHARCOAL, 1);
+  dot(ctx, 24, -22, 3.2, INK_BLACK, 0.95);
+  ctx.save(); ctx.translate(-16, -16); ctx.rotate(-0.5 + wag);
+  charcoalStroke(ctx, [[0,0], [-12,-8]], { seed:s+3, width:2.8 });
+  ctx.restore();
+  charcoalStroke(ctx, [[-8, -6], [-8, 0]], { seed:s+4, width:2.4 });
+  charcoalStroke(ctx, [[8, -6], [8, 0]], { seed:s+5, width:2.4 });
+  ctx.restore();
+}
+
+/* ============================================================
+ * Multi-Shot Film Timeline Dispatcher (30.0s Total)
+ * ============================================================ */
+const SHOTS = [
+  { t0: 0.0,  t1: 3.2,  render: renderShot1 }, // Shot 1: ECU Charcoal Friction
+  { t0: 3.2,  t1: 6.5,  render: renderShot2 }, // Shot 2: Top-Down Flat Lay Sprite Awaking
+  { t0: 6.5,  t1: 9.0,  render: renderShot3 }, // Shot 3: Action Heist & Lens Splatter
+  { t0: 9.0,  t1: 14.5, render: renderShot4 }, // Shot 4: Dutch Angle Tracking Chase
+  { t0: 14.5, t1: 18.5, render: renderShot5 }, // Shot 5: Vertigo Clock Hand Abyss
+  { t0: 18.5, t1: 22.0, render: renderShot6 }, // Shot 6: OTS The Peace Offering
+  { t0: 22.0, t1: 25.5, render: renderShot7 }, // Shot 7: Emotional ECU Feast & Heart
+  { t0: 25.5, t1: 30.0, render: renderShot8 }  // Shot 8: Grand CinemaScope Sunrise
+];
+
+window.__duration = ()=> TOTAL_DUR;
+
+window.__seek = function(t){
+  t = Math.max(0, Math.min(TOTAL_DUR, t));
+  for(let i=0; i<SHOTS.length; i++){
+    const shot = SHOTS[i];
+    if(t >= shot.t0 && (t < shot.t1 || i === SHOTS.length-1)){
+      const tRel = t - shot.t0;
+      const dur = shot.t1 - shot.t0;
+      shot.render(ctx, tRel, dur);
+      break;
+    }
+  }
+};
+
+/* ---------- Interactive live preview ---------- */
+const params = new URLSearchParams(location.search);
+if(params.has('live')){
+  const t0 = performance.now();
+  (function loop(){
+    const t = ((performance.now() - t0) / 1000) % TOTAL_DUR;
+    window.__seek(t);
+    requestAnimationFrame(loop);
+  })();
+} else {
+  window.__seek(0.01);
+}
+</script>
+</body>
+</html>

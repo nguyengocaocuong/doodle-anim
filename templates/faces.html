@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>faces — anime face generator</title>
+<style>
+  html,body{margin:0;padding:0;background:#efe9d8;height:100%;overflow:hidden}
+  canvas{display:block;margin:0 auto}
+</style>
+</head>
+<body>
+<canvas id="cv" width="1280" height="720"></canvas>
+<script>
+'use strict';
+/* ============================================================
+ * faces — procedural anime-face generator (Kevin Ngo style).
+ * A grid of seeded faces: hair silhouettes, sharp/round/sleepy
+ * eyes, cyberpunk accessories, hatch shading, staggered blinks.
+ * Deterministic: seeded RNG + pure function of t. Loop = 4s.
+ * URL params: ?seed=7 &cols=6 &rows=3 &live
+ * ============================================================ */
+
+function mulberry32(seed){
+  let a = seed >>> 0;
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+class RNG {
+  constructor(seed){ this.f = mulberry32(seed); }
+  next(){ return this.f(); }
+  range(a,b){ return a + (b-a)*this.f(); }
+  int(a,b){ return Math.floor(this.range(a, b+1)); }
+  pick(arr){ return arr[Math.floor(this.f()*arr.length)]; }
+  chance(p){ return this.f() < p; }
+}
+function makeNoise1D(seed){
+  const rng = mulberry32(seed);
+  const N = 128, table = new Float32Array(N*2);
+  for(let i=0;i<N;i++) table[i] = rng()*2-1;
+  for(let i=0;i<N;i++) table[N+i] = table[i];
+  return function(t){
+    const i = Math.floor(t), f = t - i;
+    const u = f*f*(3-2*f);
+    return table[i%N] + (table[(i+1)%N] - table[i%N]) * u;
+  };
+}
+const INK = '#1a1712';
+const SKIN = '#f6efdd';
+
+function subdivide(pts, step){
+  if(pts.length < 2) return pts.slice();
+  const out = [pts[0].slice()];
+  for(let i=1;i<pts.length;i++){
+    const [x0,y0] = pts[i-1], [x1,y1] = pts[i];
+    const d = Math.hypot(x1-x0, y1-y0);
+    const n = Math.max(1, Math.round(d/step));
+    for(let k=1;k<=n;k++){ const u = k/n; out.push([x0+(x1-x0)*u, y0+(y1-y0)*u]); }
+  }
+  return out;
+}
+function wobblePts(pts, seed, mag, close){
+  const nx = makeNoise1D(seed), ny = makeNoise1D(seed+101);
+  return pts.map((p,i)=>{
+    let dx = nx(i*0.35)*mag, dy = ny(i*0.35)*mag;
+    if(close && (i===0 || i===pts.length-1)){ dx = nx(0)*mag; dy = ny(0)*mag; }
+    return [p[0]+dx, p[1]+dy];
+  });
+}
+function pathFrom(pts, close){
+  const p = new Path2D();
+  p.moveTo(pts[0][0], pts[0][1]);
+  for(let i=1;i<pts.length;i++) p.lineTo(pts[i][0], pts[i][1]);
+  if(close) p.closePath();
+  return p;
+}
+function roughStroke(ctx, pts, o={}){
+  const sub = subdivide(pts, o.step ?? 8);
+  ctx.save();
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.strokeStyle = o.color ?? INK;
+  for(let pass=0; pass<2; pass++){
+    const wp = wobblePts(sub, (o.seed ?? 1) + pass*104729, (o.wobble ?? 1.2)*(pass? 0.8:1), o.close ?? false);
+    ctx.globalAlpha *= pass ? (o.alpha ?? 1)*0.35 : (o.alpha ?? 1);
+    ctx.lineWidth = pass ? (o.width ?? 4)*0.65 : (o.width ?? 4);
+    ctx.stroke(pathFrom(wp, o.close ?? false));
+  }
+  ctx.restore();
+}
+function flatFill(ctx, pts, color, o={}){
+  const sub = subdivide(pts, 9);
+  const wp = wobblePts(sub, (o.seed ?? 1)+55, o.wobble ?? 1.0, true);
+  ctx.save();
+  ctx.globalAlpha *= o.alpha ?? 1;
+  ctx.fillStyle = color;
+  ctx.fill(pathFrom(wp, true));
+  ctx.restore();
+}
+function shape(ctx, pts, o={}){
+  if(o.fill) flatFill(ctx, pts, o.fill, o);
+  roughStroke(ctx, pts, { ...o, close:true });
+}
+function ellipsePts(cx,cy,rx,ry,n=24,rot=0){
+  const pts=[];
+  for(let i=0;i<n;i++){
+    const a = i/n*Math.PI*2;
+    const x = Math.cos(a)*rx, y = Math.sin(a)*ry;
+    pts.push([cx + x*Math.cos(rot)-y*Math.sin(rot), cy + x*Math.sin(rot)+y*Math.cos(rot)]);
+  }
+  return pts;
+}
+function blobPts(cx, cy, r, seed, opts={}){
+  const n = opts.n ?? 28;
+  const n1 = makeNoise1D(seed), n2 = makeNoise1D(seed+31);
+  const amp = opts.amp ?? 0.05, sqX = opts.sqX ?? 1, sqY = opts.sqY ?? 1;
+  const pts = [];
+  for(let i=0;i<n;i++){
+    const a = i/n*Math.PI*2;
+    const rr = r * (1 + amp*n1(i*0.55) + amp*0.5*n2(i*1.3));
+    pts.push([cx + Math.cos(a)*rr*sqX, cy + Math.sin(a)*rr*sqY]);
+  }
+  return pts;
+}
+function arcPts(cx, cy, r, a0, a1, n=12){
+  const pts = [];
+  for(let i=0;i<=n;i++){
+    const a = a0 + (a1-a0)*i/n;
+    pts.push([cx + Math.cos(a)*r, cy + Math.sin(a)*r]);
+  }
+  return pts;
+}
+function dot(ctx, x, y, r, color, alpha=1){
+  ctx.save();
+  ctx.globalAlpha *= alpha; ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+/* ---------- cream paper backdrop ---------- */
+function makePaper(w, h, seed){
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#efe9d8';
+  ctx.fillRect(0,0,w,h);
+  const rng = mulberry32(seed);
+  for(let i=0;i<7;i++){
+    const x = rng()*w, y = rng()*h, r = 160+rng()*300;
+    const g = ctx.createRadialGradient(x,y,0,x,y,r);
+    g.addColorStop(0, 'rgba(210,198,170,0.25)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x-r,y-r,r*2,r*2);
+  }
+  const img = ctx.getImageData(0,0,w,h);
+  const d = img.data;
+  const n2 = makeNoise1D(seed+77);
+  let i = 0;
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      const g = n2(x*0.013 + y*0.017)*4 + (rng()-0.5)*7;
+      d[i] += g; d[i+1] += g; d[i+2] += g;
+      i += 4;
+    }
+  }
+  ctx.putImageData(img,0,0);
+  return cv;
+}
+
+/* ============================================================
+ * AnimeFace — seeded face. Local space: face center (0,0), r≈62.
+ * ============================================================ */
+const HAIR_COLORS = ['#2a2118', '#241d16', '#3a2c1e', '#2c3444', '#4a2c26', '#584a68', '#7a6a4a'];
+const ACCENTS = ['#7fd4d8', '#d87f7f', '#d8c37f'];
+
+class AnimeFace {
+  constructor(seed){
+    const rng = new RNG(seed);
+    this.seed = seed;
+    this.jaw = rng.range(0.56, 0.72);          // chin taper
+    this.headW = rng.range(0.92, 1.06);
+    this.hairStyle = rng.pick(['bob','long','spiky','bangs','buzz','mohawk','ponytail']);
+    this.hairColor = rng.pick(HAIR_COLORS);
+    this.hatch = rng.chance(0.75);             // hatched hair fill
+    this.eyeStyle = rng.pick(['sharp','round','sleepy']);
+    this.acc = rng.pick(['none','none','glasses','eyepatch','visor','goggles','headphones','mask']);
+    this.accent = rng.pick(ACCENTS);
+    this.blinkOff = rng.range(0, 4);
+    this.swayOff = rng.range(0, Math.PI*2);
+    this.cheek = rng.chance(0.6);
+  }
+  blinking(t){ return ((t + this.blinkOff) % 4) < 0.14; }
+
+  // tapered head outline (wide crown → narrow chin)
+  facePts(){
+    const r = 62, pts = [], n = 26;
+    for(let i=0;i<n;i++){
+      const a = i/n*Math.PI*2;
+      let x = Math.cos(a)*r*this.headW, y = Math.sin(a)*r;
+      if(y > 0){
+        const k = y/r;
+        x *= 1 - k*(1-this.jaw);
+        y *= 1.14;
+      }
+      pts.push([x, y+4]);
+    }
+    return pts;
+  }
+
+  hairPts(){
+    const r = 62, s = this.hairStyle;
+    if(s === 'spiky' || s === 'mohawk'){
+      // zigzag crown over the top half
+      const pts = [];
+      const a0 = Math.PI*1.02, a1 = Math.PI*1.98;
+      const n = s === 'mohawk' ? 9 : 12;
+      for(let i=0;i<=n;i++){
+        const a = a0 + (a1-a0)*i/n;
+        const rr = r*(1.02 + (i%2 ? 0.34 : 0.06) * (s==='mohawk' ? Math.sin(i/n*Math.PI) : 1));
+        pts.push([Math.cos(a)*rr*this.headW, Math.sin(a)*rr - 6]);
+      }
+      // close along the forehead line
+      pts.push([r*0.9*this.headW, -r*0.28]);
+      pts.push([-r*0.9*this.headW, -r*0.28]);
+      return pts;
+    }
+    if(s === 'buzz'){
+      // thick stubble cap hugging the crown
+      const pts = arcPts(0, 0, r*1.0, Math.PI*1.05, Math.PI*1.95, 18)
+        .concat(arcPts(0, 0, r*0.74, Math.PI*1.95, Math.PI*1.05, 14));
+      return pts.map(([x,y])=>[x*this.headW, y-2]);
+    }
+    if(s === 'bangs'){
+      // cap + jagged fringe
+      const pts = arcPts(0, -4, r*1.04, Math.PI*1.0, Math.PI*2.0, 16);
+      const fringe = [];
+      const tips = 7;
+      for(let i=tips;i>=0;i--){
+        const x = -r*0.95*this.headW + (2*r*0.95*this.headW)*(i/tips);
+        fringe.push([x, -r*0.30 + (i%2 ? r*0.14 : 0)]);
+      }
+      return pts.map(([x,y])=>[x*this.headW, y]).concat(fringe);
+    }
+    // bob / long / ponytail: big blob behind the head
+    const sqY = s === 'long' ? 1.5 : 1.18;
+    return blobPts(0, -r*0.10, r*1.16, this.seed^0x31, { amp:0.04, sqX:this.headW*1.02, sqY });
+  }
+
+  drawHair(ctx){
+    const s = this.hairStyle;
+    const pts = this.hairPts();
+    shape(ctx, pts, { seed:this.seed^0x32, fill:this.hairColor, width:4.5, wobble:1.4 });
+    if(this.hatch){
+      // directional hatch lines clipped to the hair silhouette
+      ctx.save();
+      ctx.clip(pathFrom(subdivide(pts, 9), true));
+      ctx.globalAlpha *= 0.22;
+      ctx.strokeStyle = '#efe9d8';
+      ctx.lineWidth = 2;
+      const rng = mulberry32(this.seed^0x33);
+      for(let i=0;i<16;i++){
+        const x0 = -80 + i*11 + rng()*4;
+        ctx.beginPath();
+        ctx.moveTo(x0, -110); ctx.lineTo(x0+26, 90);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    if(s === 'buzz'){
+      // stubble texture
+      const r2 = new RNG(this.seed^0x45);
+      for(let i=0;i<40;i++){
+        const a = r2.range(Math.PI*1.08, Math.PI*1.92), rr = r2.range(42, 58);
+        dot(ctx, Math.cos(a)*rr*this.headW, Math.sin(a)*rr-2, 1.1, '#efe9d8', 0.5);
+      }
+    }
+  }
+
+  draw(ctx, t, x, y, scale){
+    const s = this.seed;
+    const blink = this.blinking(t);
+    ctx.save();
+    ctx.translate(x, y + Math.sin(t*1.3 + this.swayOff)*2);
+    ctx.scale(scale, scale);
+
+    // ponytail behind everything
+    if(this.hairStyle === 'ponytail'){
+      const sway = Math.sin(t*1.7 + this.swayOff)*4;
+      shape(ctx, [[26,-58],[66,-30+sway],[58,42+sway],[40,34],[30,-20]], { seed:s^0x71, fill:this.hairColor, width:4.5 });
+    }
+    // hair behind the face for the full-cover styles
+    const fullHair = ['bob','long','ponytail'].includes(this.hairStyle);
+    if(fullHair) this.drawHair(ctx);
+
+    // neck + face
+    flatFill(ctx, [[-10,52],[10,52],[10,76],[-10,76]], SKIN, { seed:s^0x34 });
+    roughStroke(ctx, [[-10,54],[-10,76]], { seed:s^0x35, wobble:0.6, width:3.5 });
+    roughStroke(ctx, [[10,54],[10,76]], { seed:s^0x36, wobble:0.6, width:3.5 });
+    shape(ctx, this.facePts(), { seed:s^0x37, fill:SKIN, width:4.5, wobble:1.2 });
+
+    // hairline fringe across the forehead for the full-cover styles
+    if(fullHair){
+      const fringe = [];
+      const tips = 6;
+      for(let i=0;i<=tips;i++){
+        const x = -58*this.headW + (116*this.headW)*(i/tips);
+        fringe.push([x, -31 + (i%2 ? 9 : 0)]);
+      }
+      roughStroke(ctx, fringe, { seed:s^0x44, wobble:0.7, width:4.5 });
+    }
+
+    // cheek hatch ticks
+    if(this.cheek){
+      for(const cx of [-30, 28]){
+        for(let i=0;i<3;i++)
+          roughStroke(ctx, [[cx+i*4, 22],[cx+i*4+5, 28]], { seed:s+cx*7+i, wobble:0.3, width:1.6, alpha:0.45 });
+      }
+    }
+
+    // eyes
+    const eyeY = 2, eyeDX = 23;
+    for(const sd of [-1,1]){
+      const ex = sd*eyeDX;
+      if(this.acc === 'eyepatch' && sd === 1) continue;      // covered
+      if(this.acc === 'visor') continue;                      // covered by band
+      if(blink){
+        roughStroke(ctx, [[ex-8, eyeY],[ex+8, eyeY-1]], { seed:s+sd*11, wobble:0.4, width:3.5 });
+        continue;
+      }
+      if(this.eyeStyle === 'sharp'){
+        shape(ctx, [[ex-9, eyeY-2],[ex+9, eyeY-6],[ex+6, eyeY+6],[ex-6, eyeY+6]], { seed:s+sd*13, fill:'#fff', width:3.5, wobble:0.5 });
+        roughStroke(ctx, [[ex-10, eyeY-1],[ex+10, eyeY-6],[ex+12, eyeY-9]], { seed:s+sd*17, wobble:0.4, width:4.5 });
+        dot(ctx, ex+1, eyeY+1, 3.2, INK);
+        dot(ctx, ex+2, eyeY, 1.1, '#fff');
+      } else if(this.eyeStyle === 'round'){
+        shape(ctx, ellipsePts(ex, eyeY, 7.5, 10, 14), { seed:s+sd*13, fill:'#fff', width:3.5, wobble:0.5 });
+        dot(ctx, ex+1, eyeY+1, 3.6, INK);
+        dot(ctx, ex+2.2, eyeY-0.5, 1.2, '#fff');
+      } else { // sleepy: half-lidded
+        shape(ctx, [[ex-8, eyeY],[ex+8, eyeY-1],[ex+6, eyeY+6],[ex-6, eyeY+6]], { seed:s+sd*13, fill:'#fff', width:3, wobble:0.5 });
+        roughStroke(ctx, [[ex-9, eyeY-1],[ex+9, eyeY-2]], { seed:s+sd*17, wobble:0.4, width:4.5 });
+        dot(ctx, ex+0.5, eyeY+3, 2.6, INK);
+      }
+    }
+    // brows
+    for(const sd of [-1,1])
+      roughStroke(ctx, [[sd*eyeDX-8, eyeY-15],[sd*eyeDX+7, eyeY-18]], { seed:s+sd*19, wobble:0.5, width:3 });
+    // nose + mouth
+    roughStroke(ctx, [[1, 14],[4, 20],[0, 22]], { seed:s^0x38, wobble:0.3, width:2.5 });
+    if(this.acc !== 'mask')
+      roughStroke(ctx, arcPts(0, 34, 9, 0.4, Math.PI-0.6, 8), { seed:s^0x39, wobble:0.4, width:3 });
+
+    // top/front hair for the cap styles
+    if(!fullHair) this.drawHair(ctx);
+
+    // accessories
+    if(this.acc === 'glasses'){
+      for(const sd of [-1,1])
+        shape(ctx, ellipsePts(sd*eyeDX, eyeY, 13, 10, 14), { seed:s+sd*23, fill:'rgba(255,255,255,0.25)', width:3.5, wobble:0.5 });
+      roughStroke(ctx, [[-eyeDX+13, eyeY-2],[eyeDX-13, eyeY-2]], { seed:s^0x3a, wobble:0.3, width:3 });
+    } else if(this.acc === 'eyepatch'){
+      shape(ctx, blobPts(eyeDX, eyeY, 11, s^0x3b, { amp:0.08 }), { seed:s^0x3c, fill:'#241d16', width:3.5 });
+      roughStroke(ctx, [[-44, -22],[eyeDX, eyeY-4],[46, 18]], { seed:s^0x3d, wobble:0.5, width:2.5 });
+    } else if(this.acc === 'visor'){
+      shape(ctx, [[-46, eyeY-12],[46, eyeY-12],[42, eyeY+8],[-42, eyeY+8]], { seed:s^0x3b, fill:'#241d16', width:3.5 });
+      roughStroke(ctx, [[-36, eyeY-2],[36, eyeY-2]], { seed:s^0x3c, wobble:0.4, width:3, color:this.accent });
+      dot(ctx, 40, eyeY-2, 2.5, this.accent, 0.9);
+    } else if(this.acc === 'goggles'){
+      for(const sd of [-1,1]){
+        shape(ctx, ellipsePts(sd*16, -46, 12, 10, 14), { seed:s+sd*29, fill:'#3a3226', width:3.5, wobble:0.5 });
+        dot(ctx, sd*16, -46, 5, this.accent, 0.5);
+      }
+      roughStroke(ctx, [[-16-12, -46],[-16+12, -46]], { seed:s^0x3e, wobble:0.3, width:3 });
+    } else if(this.acc === 'headphones'){
+      roughStroke(ctx, arcPts(0, -10, 58, Math.PI*1.15, Math.PI*1.85, 16), { seed:s^0x3f, wobble:0.8, width:6 });
+      for(const sd of [-1,1])
+        shape(ctx, ellipsePts(sd*56, 0, 9, 14, 12), { seed:s+sd*31, fill:'#3a3226', width:3.5 });
+    } else if(this.acc === 'mask'){
+      shape(ctx, [[-28, 12],[28, 12],[24, 52],[-24, 52]], { seed:s^0x41, fill:'#3a3226', width:3.5, wobble:1.0 });
+      roughStroke(ctx, [[-28, 16],[-46, 8]], { seed:s^0x42, wobble:0.3, width:2.5 });
+      roughStroke(ctx, [[28, 16],[46, 8]], { seed:s^0x43, wobble:0.3, width:2.5 });
+      dot(ctx, 0, 32, 3, this.accent, 0.8);
+    }
+    ctx.restore();
+  }
+}
+
+/* ---------- page & scene manager ---------- */
+const canvas = document.getElementById('cv');
+const ctx = canvas.getContext('2d');
+const params = new URLSearchParams(location.search);
+const SEED = parseInt(params.get('seed') ?? '7', 10);
+const COLS = parseInt(params.get('cols') ?? '6', 10);
+const ROWS = parseInt(params.get('rows') ?? '3', 10);
+const LOOP = 4;
+
+const rng = new RNG(SEED);
+const FACES = [];
+for(let i=0;i<COLS*ROWS;i++)
+  FACES.push({ face: new AnimeFace(SEED*1000 + i*137), sc: rng.range(0.8, 1.0), rot: rng.range(-0.035, 0.035) });
+
+const PAPER = makePaper(canvas.width, canvas.height, SEED^0x99);
+
+window.__duration = ()=> LOOP;
+window.__seek = function(t){
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0,0,W,H);
+  ctx.drawImage(PAPER, 0, 0);
+  const cw = W/COLS, ch = H/ROWS;
+  FACES.forEach(({face, sc, rot}, i)=>{
+    const cx = (i%COLS + 0.5)*cw, cy = (Math.floor(i/COLS) + 0.48)*ch;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(rot);
+    ctx.translate(-cx, -cy);
+    face.draw(ctx, t, cx, cy, sc*Math.min(cw, ch)/150);
+    ctx.restore();
+  });
+};
+
+if(params.has('live')){
+  const t0 = performance.now();
+  (function loop(){
+    window.__seek(((performance.now()-t0)/1000) % LOOP);
+    requestAnimationFrame(loop);
+  })();
+}else{
+  window.__seek(0.01);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>replica — Alberto-style lineup</title>
+<style>
+  html,body{margin:0;padding:0;background:#f2ecdc;height:100%;overflow:hidden}
+  canvas{display:block;margin:0 auto}
+</style>
+</head>
+<body>
+<canvas id="cv" width="960" height="720"></canvas>
+<script>
+'use strict';
+/* ============================================================
+ * replica — a 1:1-ish copy of @albertobeicas' lineup sheet:
+ * pencil outlines, directional hatch fills, big heads on tiny
+ * bodies, one signature per character. 4:3 canvas (960x720).
+ * Every character idles in place. Deterministic in t.
+ * ============================================================ */
+
+function mulberry32(seed){
+  let a = seed >>> 0;
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+class RNG {
+  constructor(seed){ this.f = mulberry32(seed); }
+  next(){ return this.f(); }
+  range(a,b){ return a + (b-a)*this.f(); }
+  int(a,b){ return Math.floor(this.range(a, b+1)); }
+  pick(arr){ return arr[Math.floor(this.f()*arr.length)]; }
+  chance(p){ return this.f() < p; }
+}
+function makeNoise1D(seed){
+  const rng = mulberry32(seed);
+  const N = 128, table = new Float32Array(N*2);
+  for(let i=0;i<N;i++) table[i] = rng()*2-1;
+  for(let i=0;i<N;i++) table[N+i] = table[i];
+  return function(t){
+    const i = Math.floor(t), f = t - i;
+    const u = f*f*(3-2*f);
+    return table[i%N] + (table[(i+1)%N] - table[i%N]) * u;
+  };
+}
+const PENCIL = '#3a322a';
+const PAPER_C = '#f2ecdc';
+
+function subdivide(pts, step){
+  if(pts.length < 2) return pts.slice();
+  const out = [pts[0].slice()];
+  for(let i=1;i<pts.length;i++){
+    const [x0,y0] = pts[i-1], [x1,y1] = pts[i];
+    const d = Math.hypot(x1-x0, y1-y0);
+    const n = Math.max(1, Math.round(d/step));
+    for(let k=1;k<=n;k++){ const u = k/n; out.push([x0+(x1-x0)*u, y0+(y1-y0)*u]); }
+  }
+  return out;
+}
+function wobblePts(pts, seed, mag, close){
+  const nx = makeNoise1D(seed), ny = makeNoise1D(seed+101);
+  return pts.map((p,i)=>{
+    let dx = nx(i*0.35)*mag, dy = ny(i*0.35)*mag;
+    if(close && (i===0 || i===pts.length-1)){ dx = nx(0)*mag; dy = ny(0)*mag; }
+    return [p[0]+dx, p[1]+dy];
+  });
+}
+function pathFrom(pts, close){
+  const p = new Path2D();
+  p.moveTo(pts[0][0], pts[0][1]);
+  for(let i=1;i<pts.length;i++) p.lineTo(pts[i][0], pts[i][1]);
+  if(close) p.closePath();
+  return p;
+}
+function roughStroke(ctx, pts, o={}){
+  const seed  = o.seed  ?? 1;
+  const wob   = o.wobble ?? 1.1;
+  const close = o.close ?? false;
+  const width = o.width ?? 1.5;
+  const alpha = o.alpha ?? 0.78;
+  const color = o.color ?? PENCIL;
+  const sub = subdivide(pts, 6);
+  ctx.save();
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.strokeStyle = color;
+  for(let pass=0; pass<2; pass++){
+    const wp = wobblePts(sub, seed + pass*104729, wob*(pass? 0.9:1), close);
+    ctx.globalAlpha = pass ? alpha*0.4 : alpha;
+    ctx.lineWidth = pass ? width*0.7 : width;
+    ctx.stroke(pathFrom(wp, close));
+  }
+  ctx.restore();
+}
+function washFill(ctx, pts, color, o={}){
+  const seed   = o.seed ?? 1;
+  const layers = o.layers ?? 3;
+  const alpha  = o.alpha ?? 0.12;
+  const bleed  = o.bleed ?? 2.2;
+  const sub = subdivide(pts, 8);
+  let cx=0, cy=0;
+  for(const p of sub){ cx+=p[0]; cy+=p[1]; }
+  cx/=sub.length; cy/=sub.length;
+  ctx.save();
+  ctx.fillStyle = color;
+  for(let L=0; L<layers; L++){
+    const grow = bleed * (L+1) / layers;
+    const nx = makeNoise1D(seed + L*31), ny = makeNoise1D(seed + L*31 + 7);
+    const wobbled = sub.map((p,i)=>{
+      const vx = p[0]-cx, vy = p[1]-cy;
+      const d = Math.hypot(vx,vy) || 1;
+      const r = grow * (0.6 + 0.8*Math.abs(nx(i*0.4)));
+      return [ p[0] + vx/d*r + nx(i*0.4)*1.0, p[1] + vy/d*r + ny(i*0.4)*1.0 ];
+    });
+    ctx.globalAlpha = alpha * (1 - 0.5*L/layers);
+    ctx.fill(pathFrom(wobbled, true));
+  }
+  ctx.restore();
+}
+function shape(ctx, pts, o={}){
+  if(o.fill) washFill(ctx, pts, o.fill, o);
+  roughStroke(ctx, pts, { ...o, close:true });
+}
+function ellipsePts(cx,cy,rx,ry,n=22,rot=0){
+  const pts=[];
+  for(let i=0;i<n;i++){
+    const a = i/n*Math.PI*2;
+    const x = Math.cos(a)*rx, y = Math.sin(a)*ry;
+    pts.push([cx + x*Math.cos(rot)-y*Math.sin(rot), cy + x*Math.sin(rot)+y*Math.cos(rot)]);
+  }
+  return pts;
+}
+function blobPts(cx, cy, r, seed, opts={}){
+  const n = opts.n ?? 26;
+  const n1 = makeNoise1D(seed), n2 = makeNoise1D(seed+31);
+  const amp = opts.amp ?? 0.05, sqX = opts.sqX ?? 1, sqY = opts.sqY ?? 1;
+  const jaw = opts.jaw ?? 0;
+  const pts = [];
+  for(let i=0;i<n;i++){
+    const a = i/n*Math.PI*2;
+    let rr = r * (1 + amp*n1(i*0.55) + amp*0.5*n2(i*1.3));
+    if(jaw) rr *= 1 + jaw*Math.max(0, Math.sin(a));
+    pts.push([cx + Math.cos(a)*rr*sqX, cy + Math.sin(a)*rr*sqY]);
+  }
+  return pts;
+}
+function arcPts(cx, cy, r, a0, a1, n=12){
+  const pts = [];
+  for(let i=0;i<=n;i++){
+    const a = a0 + (a1-a0)*i/n;
+    pts.push([cx + Math.cos(a)*r, cy + Math.sin(a)*r]);
+  }
+  return pts;
+}
+function dot(ctx, x, y, r, color, alpha=0.8){
+  ctx.save();
+  ctx.globalAlpha = alpha; ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+/* directional fine hatching inside a clipped region — his hair/dark-body texture */
+function hatchFill(ctx, pts, o={}){
+  const seed = o.seed ?? 1;
+  const ang  = o.angle ?? Math.PI/2;         // vertical by default
+  const gap  = o.gap ?? 3.2;
+  ctx.save();
+  ctx.clip(pathFrom(subdivide(pts, 8), true));
+  ctx.globalAlpha = o.alpha ?? 0.5;
+  ctx.strokeStyle = o.color ?? PENCIL;
+  ctx.lineWidth = o.width ?? 1.0;
+  ctx.lineCap = 'round';
+  let x0=1e9, x1=-1e9, y0=1e9, y1=-1e9;
+  for(const [x,y] of pts){ x0=Math.min(x0,x); x1=Math.max(x1,x); y0=Math.min(y0,y); y1=Math.max(y1,y); }
+  const cx=(x0+x1)/2, cy=(y0+y1)/2;
+  const len = Math.max(x1-x0, y1-y0);
+  const dx=Math.cos(ang), dy=Math.sin(ang), px=-dy, py=dx;
+  const n = Math.ceil(len/gap)+1;
+  const rng = mulberry32(seed);
+  for(let i=-n;i<=n;i++){
+    const ox = px*i*gap, oy = py*i*gap;
+    ctx.beginPath();
+    ctx.moveTo(cx+ox-dx*len*0.7+(rng()-0.5)*2, cy+oy-dy*len*0.7+(rng()-0.5)*2);
+    ctx.lineTo(cx+ox+dx*len*0.7+(rng()-0.5)*2, cy+oy+dy*len*0.7+(rng()-0.5)*2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* warm cream paper */
+function makePaper(w, h, seed){
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = PAPER_C;
+  ctx.fillRect(0,0,w,h);
+  const rng = mulberry32(seed);
+  for(let i=0;i<6;i++){
+    const x = rng()*w, y = rng()*h, r = 150+rng()*260;
+    const g = ctx.createRadialGradient(x,y,0,x,y,r);
+    g.addColorStop(0, 'rgba(205,192,160,0.22)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x-r,y-r,r*2,r*2);
+  }
+  const img = ctx.getImageData(0,0,w,h);
+  const d = img.data;
+  const n2 = makeNoise1D(seed+77);
+  let i = 0;
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      const g = n2(x*0.013 + y*0.017)*3.5 + (rng()-0.5)*6;
+      d[i] += g; d[i+1] += g; d[i+2] += g;
+      i += 4;
+    }
+  }
+  ctx.putImageData(img,0,0);
+  return cv;
+}
+</script>
+<script>
+'use strict';
+/* ============================================================
+ * Character drawers — front-facing, big head + tiny body.
+ * spec-driven (no rng at draw time; look is authored per slot).
+ * ============================================================ */
+
+function tinyLegs(ctx, seed, legH, dx){
+  for(const s of [-1,1]){
+    roughStroke(ctx, [[s*dx, -legH],[s*dx, 0]], { seed:seed+s, wobble:0.5, width:1.4 });
+    roughStroke(ctx, [[s*dx, 0],[s*dx + 3.5, 0]], { seed:seed+s+4, wobble:0.4, width:1.4 });
+  }
+}
+
+/* ---------------- human ---------------- */
+function drawRepHuman(ctx, t, x, gy, spec, idx){
+  const H = spec.h ?? 104;
+  const headR = H*0.36, legH = H*0.17, torsoH = H*0.20;
+  const phase = idx*1.37;
+  const bob = Math.sin(t*1.5 + phase)*1.1;
+  const blink = ((t + phase*0.83) % 3.6) < 0.13;
+  ctx.save(); ctx.translate(x, gy + bob);
+  const seed = spec.seed ?? (1000+idx*37);
+
+  // legs + tiny body
+  tinyLegs(ctx, seed^0x01, legH, H*0.07);
+  const sw = H*0.15, sy = -(legH + torsoH);
+  shape(ctx, [[-sw, sy],[sw, sy],[sw*0.8, -legH+2],[-sw*0.8, -legH+2]],
+    { seed:seed^0x02, fill:spec.body?.c ?? '#b9c6cc', alpha:0.14, width:1.4 });
+  if(spec.body?.stripes){
+    for(let i=0;i<3;i++)
+      roughStroke(ctx, [[-sw*0.9, sy+torsoH*(0.25+i*0.25)],[sw*0.9, sy+torsoH*(0.25+i*0.25)]],
+        { seed:seed^0x03+i, wobble:0.4, width:1.2, alpha:0.55 });
+  }
+  if(spec.body?.button) dot(ctx, 0, sy+torsoH*0.5, 1.6, PENCIL, 0.7);
+  // arms
+  if(spec.hands === 'phone'){
+    // both hands up holding a little rectangle in front of the lower face
+    const cy = -(legH + torsoH + headR*0.85);
+    roughStroke(ctx, [[-sw, sy+3],[-headR*0.5, cy+headR*0.5]], { seed:seed^0x04, wobble:0.6, width:1.3 });
+    roughStroke(ctx, [[sw, sy+3],[headR*0.5, cy+headR*0.5]], { seed:seed^0x05, wobble:0.6, width:1.3 });
+    shape(ctx, [[-headR*0.4, cy+headR*0.28],[headR*0.4, cy+headR*0.30],[headR*0.38, cy+headR*0.75],[-headR*0.38, cy+headR*0.73]],
+      { seed:seed^0x06, fill:'#8a8a92', alpha:0.3, width:1.4 });
+  } else {
+    for(const s of [-1,1])
+      roughStroke(ctx, [[s*sw, sy+3],[s*sw*1.25, sy+torsoH*0.75]], { seed:seed^0x04+s, wobble:0.6, width:1.3 });
+  }
+
+  // head
+  const cy = -(legH + torsoH + headR*0.85);
+  const hp = spec.head === 'tall' ? blobPts(0, cy, headR, seed^0x07, { amp:0.04, sqX:0.88, sqY:1.12 })
+         : spec.head === 'wide' ? blobPts(0, cy, headR, seed^0x07, { amp:0.04, sqX:1.16, sqY:0.9 })
+         : spec.head === 'square' ? blobPts(0, cy, headR, seed^0x07, { amp:0.025, sqX:1.02, sqY:0.98 })
+         : blobPts(0, cy, headR, seed^0x07, { amp:0.045 });
+  shape(ctx, hp, { seed:seed^0x08, fill:spec.skin ?? '#f0d2b2', alpha:0.13, bleed:2.2, width:1.6 });
+
+  // extras behind/around the face
+  if(spec.extra === 'bigears' || spec.extra2 === 'bigears')
+    for(const s of [-1,1])
+      shape(ctx, ellipsePts(s*headR*1.0, cy, headR*0.18, headR*0.26, 12), { seed:seed^0x09+s, fill:spec.skin ?? '#f0d2b2', alpha:0.15, width:1.3 });
+
+  // eyes
+  const eyeY = cy - headR*0.08, eyeDX = headR*0.34*(spec.eyeDX ?? 1), look = (spec.look ?? 0.2);
+  const er = headR*0.20;
+  const skew = (spec.eyeSkew ?? 0)*headR;
+  for(const s of [-1,1]){
+    const ex = s*eyeDX;
+    const ey = eyeY + (s>0 ? -skew : 0);
+    if(blink || spec.eyes === 'closed'){
+      roughStroke(ctx, arcPts(ex, ey, er, Math.PI+0.35, -0.35, 8), { seed:seed+s*11, wobble:0.4, width:1.5 });
+      continue;
+    }
+    if(spec.eyes === 'sleepy'){
+      shape(ctx, ellipsePts(ex, ey, er*0.9, er*0.75, 12), { seed:seed+s*11, fill:'#fdfbf5', alpha:0.5, width:1.4 });
+      roughStroke(ctx, [[ex-er, ey-er*0.55],[ex+er, ey-er*0.55]], { seed:seed+s*13, wobble:0.4, width:1.7 });
+      dot(ctx, ex + look*er*0.4, ey+er*0.15, er*0.38, PENCIL, 0.9);
+      continue;
+    }
+    // big round eye
+    shape(ctx, ellipsePts(ex, ey, er, er*1.02, 14), { seed:seed+s*11, fill:'#fdfbf5', alpha:0.55, width:1.5 });
+    dot(ctx, ex + look*er*0.5, ey + er*0.08, er*0.40, PENCIL, 0.92);
+  }
+  // brows
+  if(spec.brows === 'angry')
+    for(const s of [-1,1])
+      roughStroke(ctx, [[s*eyeDX-er, eyeY-er*1.6+s*0],[s*eyeDX+er, eyeY-er*2.1]], { seed:seed+s*17, wobble:0.4, width:2.2 });
+  else if(spec.brows === 'worried')
+    for(const s of [-1,1])
+      roughStroke(ctx, [[s*eyeDX-er, eyeY-er*1.9],[s*eyeDX+er, eyeY-er*1.4]], { seed:seed+s*17, wobble:0.4, width:1.6 });
+  // glasses / goggles
+  if(spec.eyes === 'glasses'){
+    for(const s of [-1,1])
+      roughStroke(ctx, ellipsePts(s*eyeDX, eyeY, er*1.35, er*1.25, 16), { seed:seed+s*19, wobble:0.5, width:1.4, close:true });
+    roughStroke(ctx, [[-eyeDX+er*1.35, eyeY],[eyeDX-er*1.35, eyeY]], { seed:seed^0x10, wobble:0.3, width:1.4 });
+  }
+  // nose
+  if(spec.extra === 'bignose' || spec.extra2 === 'bignose')
+    shape(ctx, blobPts(headR*0.06, cy+headR*0.18, headR*0.16, seed^0x11, { amp:0.08, sqX:1.2 }), { seed:seed^0x12, fill:spec.skin ?? '#f0d2b2', alpha:0.2, width:1.4 });
+  else
+    roughStroke(ctx, [[0, cy+headR*0.08],[headR*0.05, cy+headR*0.18],[0, cy+headR*0.2]], { seed:seed^0x11, wobble:0.3, width:1.2, alpha:0.65 });
+  // mouth
+  const my = cy + headR*0.42;
+  if(spec.mouth === 'zigzag'){
+    const pts = [];
+    for(let i=0;i<=6;i++) pts.push([-headR*0.22 + i*headR*0.073, my + (i%2 ? -headR*0.045 : headR*0.045)]);
+    roughStroke(ctx, pts, { seed:seed^0x13, wobble:0.3, width:1.5 });
+  } else if(spec.mouth === 'smile')
+    roughStroke(ctx, arcPts(0, my-headR*0.03, headR*0.2, 0.3, Math.PI-0.4, 8), { seed:seed^0x13, wobble:0.4, width:1.5 });
+  else if(spec.mouth === 'o')
+    shape(ctx, ellipsePts(0, my, headR*0.08, headR*0.11, 10), { seed:seed^0x13, fill:'#8a5a52', alpha:0.5, width:1.3 });
+  else if(spec.mouth === 'flat')
+    roughStroke(ctx, [[-headR*0.14, my],[headR*0.14, my]], { seed:seed^0x13, wobble:0.3, width:1.4 });
+  else
+    roughStroke(ctx, [[-headR*0.06, my],[headR*0.06, my]], { seed:seed^0x13, wobble:0.3, width:1.4 });
+  // freckles
+  if(spec.extra === 'freckles'){
+    const fr = new RNG(seed^0x14);
+    for(let i=0;i<5;i++) dot(ctx, (fr.next()-0.5)*headR*1.1, cy+headR*0.25+(fr.next()-0.5)*headR*0.2, 1.0, PENCIL, 0.4);
+  }
+  if(spec.extra === 'mustache'){
+    const pts = [];
+    for(let i=0;i<=10;i++){ const u=i/10; pts.push([-headR*0.3+u*headR*0.6, my-headR*0.06+Math.sin(u*Math.PI*4)*headR*0.045]); }
+    roughStroke(ctx, pts, { seed:seed^0x15, wobble:0.4, width:2.6, color:spec.hairC ?? '#4a4238' });
+  }
+
+  drawRepHair(ctx, spec, cy, headR, seed);
+  drawRepHat(ctx, t, spec, cy, headR, phase, seed);
+  ctx.restore();
+}
+
+function drawRepHair(ctx, spec, cy, headR, seed){
+  const kind = spec.hair;
+  if(!kind || kind === 'none') return;
+  const c = spec.hairC ?? '#4a4238';
+  let pts = null;
+  if(kind === 'topknot'){
+    // shaved sides + small top bun with a tie stick
+    pts = arcPts(0, cy, headR*1.0, Math.PI*1.08, Math.PI*1.92, 14)
+      .concat(arcPts(0, cy, headR*0.8, Math.PI*1.92, Math.PI*1.08, 10));
+    hatchFill(ctx, pts, { seed:seed^0x20, gap:3.4, alpha:0.4, color:c });
+    roughStroke(ctx, pts, { seed:seed^0x21, wobble:0.8, width:1.5, close:true });
+    shape(ctx, blobPts(0, cy-headR*1.12, headR*0.14, seed^0x22, { amp:0.1 }), { seed:seed^0x23, fill:c, alpha:0.5, width:1.4 });
+    roughStroke(ctx, [[-headR*0.12, cy-headR*1.1],[headR*0.2, cy-headR*1.26]], { seed:seed^0x24, wobble:0.3, width:1.6 });
+    return;
+  }
+  if(kind === 'spiky' || kind === 'shaggy'){
+    pts = [];
+    const n = kind === 'spiky' ? 9 : 7;
+    for(let i=0;i<=n;i++){
+      const a = Math.PI*1.05 + (i/n)*Math.PI*0.9;
+      pts.push([Math.cos(a)*headR*1.02, cy + Math.sin(a)*headR*1.02]);
+      if(i<n){
+        const a2 = Math.PI*1.05 + ((i+0.5)/n)*Math.PI*0.9;
+        const lift = kind === 'spiky' ? 1.28 : 1.16;
+        pts.push([Math.cos(a2)*headR*lift, cy + Math.sin(a2)*headR*lift]);
+      }
+    }
+    pts.push([headR*0.9, cy-headR*0.35], [-headR*0.9, cy-headR*0.35]);
+  } else if(kind === 'bowl'){
+    pts = arcPts(0, cy, headR*1.03, Math.PI*1.02, Math.PI*1.98, 16)
+      .concat(arcPts(0, cy, headR*0.7, Math.PI*1.98, Math.PI*1.02, 12));
+  } else if(kind === 'blindbangs'){
+    // fringe covers the eyes completely
+    pts = arcPts(0, cy, headR*1.04, Math.PI*1.0, Math.PI*2.0, 16);
+    for(let i=8;i>=0;i--) pts.push([-headR + (i/8)*headR*2, cy + headR*(0.02 + (i%2)*0.10)]);
+  } else if(kind === 'buzz'){
+    pts = arcPts(0, cy, headR*1.01, Math.PI*1.06, Math.PI*1.94, 14)
+      .concat(arcPts(0, cy, headR*0.82, Math.PI*1.94, Math.PI*1.06, 10));
+  }
+  if(!pts) return;
+  washFill(ctx, pts, c, { seed:seed^0x25, alpha:0.10, bleed:1.5 });
+  hatchFill(ctx, pts, { seed:seed^0x26, gap: kind === 'buzz' ? 2.6 : 3.2, alpha:0.5, color:c });
+  roughStroke(ctx, pts, { seed:seed^0x27, wobble:0.8, width:1.5, close:true });
+}
+
+function drawRepHat(ctx, t, spec, cy, headR, phase, seed){
+  if(!spec.hat) return;
+  const { kind, c } = spec.hat;
+  const topY = cy - headR*0.95;
+  const sway = Math.sin(t*1.8 + phase)*1.2;
+  if(kind === 'beret'){
+    shape(ctx, ellipsePts(headR*0.08, topY+headR*0.08, headR*0.62, headR*0.26, 16, 0.18),
+      { seed:seed^0x28, fill:c ?? '#5a6b3a', alpha:0.35, bleed:1.8, width:1.7 });
+    roughStroke(ctx, [[headR*0.06, topY-headR*0.12],[headR*0.12, topY-headR*0.24]], { seed:seed^0x29, wobble:0.3, width:1.6 });
+  } else if(kind === 'helmet'){
+    // round helmet + halo ring floating above
+    shape(ctx, arcPts(0, cy, headR*1.08, Math.PI, Math.PI*2, 16).concat([[headR*1.08, cy+headR*0.1],[-headR*1.08, cy+headR*0.1]]),
+      { seed:seed^0x28, fill:c ?? '#d8d2c4', alpha:0.2, width:1.7 });
+    roughStroke(ctx, ellipsePts(0, topY-headR*0.35+sway*0.4, headR*0.3, headR*0.08, 16), { seed:seed^0x29, wobble:0.5, width:1.8, close:true });
+  } else if(kind === 'beanie'){
+    shape(ctx, arcPts(0, cy, headR*1.06, Math.PI*1.02, Math.PI*1.98, 14).concat([[headR*0.9, cy-headR*0.28],[-headR*0.9, cy-headR*0.28]]),
+      { seed:seed^0x28, fill:c ?? '#a8947a', alpha:0.3, width:1.7 });
+    roughStroke(ctx, [[-headR*0.9, cy-headR*0.28],[headR*0.9, cy-headR*0.28]], { seed:seed^0x29, wobble:0.5, width:3.2 });
+    shape(ctx, blobPts(0, topY-headR*0.12+sway*0.3, headR*0.13, seed^0x2a, { amp:0.1 }), { seed:seed^0x2b, fill:c ?? '#a8947a', alpha:0.4, width:1.4 });
+  } else if(kind === 'swimcap'){
+    shape(ctx, arcPts(0, cy, headR*1.04, Math.PI*1.02, Math.PI*1.98, 14).concat([[headR*0.95, cy-headR*0.15],[-headR*0.95, cy-headR*0.15]]),
+      { seed:seed^0x28, fill:c ?? '#bcc8cc', alpha:0.25, width:1.7 });
+    // goggles pushed up on the cap
+    for(const s of [-1,1])
+      shape(ctx, ellipsePts(s*headR*0.32, topY+headR*0.12, headR*0.20, headR*0.15, 12), { seed:seed^0x2a+s, fill:'#8fa8c0', alpha:0.45, width:1.6 });
+    roughStroke(ctx, [[-headR*0.32+headR*0.2, topY+headR*0.12],[headR*0.32-headR*0.2, topY+headR*0.12]], { seed:seed^0x2c, wobble:0.3, width:1.6 });
+  }
+}
+
+/* ---------------- dog / cat (front-facing, sitting) ---------------- */
+function drawRepPet(ctx, t, x, gy, spec, idx){
+  const H = spec.h ?? 88;
+  const headR = H*0.34, bodyH = H*0.30;
+  const phase = idx*1.61;
+  const bob = Math.sin(t*1.6 + phase)*1.0;
+  const blink = ((t + phase*0.77) % 3.4) < 0.13;
+  const earWig = Math.sin(t*2.2 + phase)*1.5;
+  ctx.save(); ctx.translate(x, gy + bob);
+  const seed = spec.seed ?? (2000+idx*41);
+  const coat = spec.coat ?? '#e8ddc8';
+
+  // tail curls out from the sitting body
+  const wag = Math.sin(t*(spec.kind === 'dog' ? 5 : 1.8) + phase)*3;
+  roughStroke(ctx, [[-headR*0.9, -bodyH*0.3],[-headR*1.35, -bodyH*0.55],[ -headR*1.28, -bodyH*0.9 + wag]],
+    { seed:seed^0x30, wobble:0.7, width:2.2, color: PENCIL });
+  // sitting body
+  shape(ctx, blobPts(0, -bodyH*0.45, bodyH*0.62, seed^0x31, { amp:0.05, sqX:1.35, sqY:0.9 }),
+    { seed:seed^0x32, fill:coat, alpha:0.16, bleed:2, width:1.5 });
+  if(spec.stripes)
+    for(let i=0;i<2;i++)
+      roughStroke(ctx, [[-bodyH*0.5, -bodyH*(0.3+i*0.22)],[bodyH*0.5, -bodyH*(0.3+i*0.22)]], { seed:seed^0x33+i, wobble:0.4, width:1.2, alpha:0.5 });
+  // front paws
+  for(const s of [-1,1]){
+    roughStroke(ctx, [[s*headR*0.38, -bodyH*0.55],[s*headR*0.40, 0]], { seed:seed+s*35, wobble:0.5, width:1.5 });
+    roughStroke(ctx, [[s*headR*0.40, 0],[s*headR*0.40+3.5, 0]], { seed:seed+s*35+2, wobble:0.4, width:1.5 });
+  }
+
+  // ears (behind head)
+  const earY = -(bodyH + headR*0.55);
+  const eSeed = seed^0x36;
+  if(spec.ears === 'pigtails'){
+    for(const s of [-1,1]){
+      const sw = earWig*s*0.5;
+      roughStroke(ctx, [[s*headR*0.55, earY],[s*headR*1.05, earY-headR*0.35+sw]], { seed:eSeed+s, wobble:0.5, width:1.6 });
+      shape(ctx, blobPts(s*headR*1.12, earY-headR*0.45+sw, headR*0.26, eSeed+s*3, { amp:0.1 }),
+        { seed:eSeed+s*5, fill:spec.earC ?? coat, alpha:0.25, width:1.5 });
+    }
+  } else if(spec.ears === 'round'){
+    for(const s of [-1,1])
+      shape(ctx, ellipsePts(s*headR*0.62, earY-headR*0.15, headR*0.24, headR*0.22, 12), { seed:eSeed+s, fill:spec.earC ?? coat, alpha:0.22, width:1.5 });
+  } else if(spec.ears === 'floppy'){
+    for(const s of [-1,1])
+      shape(ctx, blobPts(s*headR*0.78, earY+headR*0.25, headR*0.28, eSeed+s*3, { amp:0.07, sqX:0.55, sqY:1.5 }),
+        { seed:eSeed+s*5, fill:spec.earC ?? coat, alpha:0.28, width:1.5 });
+  } else { // pointy / alert
+    for(const s of [-1,1])
+      shape(ctx, [[s*headR*0.5, earY],[s*headR*0.68, earY-headR*0.5+earWig*0.3],[s*headR*0.88, earY+headR*0.02]],
+        { seed:eSeed+s, fill:spec.earC ?? coat, alpha:0.2, width:1.5 });
+  }
+
+  // head
+  const hy = -(bodyH + headR*0.6);
+  shape(ctx, blobPts(0, hy, headR, seed^0x37, { amp:0.045, sqY:0.92 }),
+    { seed:seed^0x38, fill:coat, alpha:0.16, bleed:2.2, width:1.6 });
+  // wrinkles (hairless cat)
+  if(spec.wrinkles){
+    for(let i=0;i<3;i++)
+      roughStroke(ctx, arcPts(0, hy-headR*(0.35-i*0.18), headR*(0.55-i*0.08), Math.PI*1.15, Math.PI*1.85, 10),
+        { seed:seed^0x39+i, wobble:0.4, width:1.1, alpha:0.5 });
+  }
+  // markings
+  if(spec.patch === 'eye')
+    shape(ctx, blobPts(headR*0.34, hy-headR*0.12, headR*0.34, seed^0x3a, { amp:0.1 }),
+      { seed:seed^0x3b, fill:spec.markC ?? '#4a4238', alpha:0.45, width:1.2 });
+  else if(spec.patch === 'mask')
+    shape(ctx, blobPts(0, hy-headR*0.1, headR*0.62, seed^0x3a, { amp:0.07, sqX:1.25, sqY:0.55 }),
+      { seed:seed^0x3b, fill:spec.markC ?? '#4a4238', alpha:0.45, width:1.2 });
+  // muzzle
+  if(spec.muzzle === 'dark')
+    shape(ctx, blobPts(0, hy+headR*0.32, headR*0.3, seed^0x3c, { amp:0.06, sqX:1.2, sqY:0.7 }),
+      { seed:seed^0x3d, fill:spec.markC ?? '#4a4238', alpha:0.4, width:1.3 });
+
+  // eyes
+  const eyeY = hy - headR*0.1, eyeDX = headR*0.34;
+  for(const s of [-1,1]){
+    const ex = s*eyeDX;
+    if(spec.xeye && s === 1){
+      roughStroke(ctx, [[ex-4, eyeY-4],[ex+4, eyeY+4]], { seed:seed+s*43, wobble:0.3, width:1.6 });
+      roughStroke(ctx, [[ex-4, eyeY+4],[ex+4, eyeY-4]], { seed:seed+s*43+1, wobble:0.3, width:1.6 });
+      continue;
+    }
+    if(blink){
+      roughStroke(ctx, [[ex-4.5, eyeY],[ex+4.5, eyeY]], { seed:seed+s*43, wobble:0.3, width:1.4 });
+      continue;
+    }
+    const er = headR*0.15;
+    shape(ctx, ellipsePts(ex, eyeY, er, er*1.05, 12), { seed:seed+s*43, fill:'#fdfbf5', alpha:0.5, width:1.4 });
+    dot(ctx, ex+er*0.2, eyeY+er*0.1, er*0.42, PENCIL, 0.9);
+  }
+  if(spec.glasses){
+    for(const s of [-1,1])
+      roughStroke(ctx, ellipsePts(s*eyeDX, eyeY, headR*0.22, headR*0.2, 14), { seed:seed+s*47, wobble:0.4, width:1.3, close:true });
+    roughStroke(ctx, [[-eyeDX+headR*0.22, eyeY],[eyeDX-headR*0.22, eyeY]], { seed:seed^0x48, wobble:0.3, width:1.3 });
+  }
+  // nose + mouth
+  dot(ctx, 0, hy+headR*0.22, headR*0.09, PENCIL, 0.9);
+  if(spec.kind === 'cat'){
+    roughStroke(ctx, arcPts(-headR*0.1, hy+headR*0.36, headR*0.1, 0.2, Math.PI-0.2, 8), { seed:seed^0x49, wobble:0.3, width:1.3 });
+    roughStroke(ctx, arcPts(headR*0.1, hy+headR*0.36, headR*0.1, 0.2, Math.PI-0.2, 8), { seed:seed^0x4a, wobble:0.3, width:1.3 });
+    for(const s of [-1,1])
+      for(const wy of [0, 1])
+        roughStroke(ctx, [[s*headR*0.5, hy+headR*0.25+wy*4],[s*headR*1.05, hy+headR*0.2+wy*5]], { seed:seed+s*51+wy, wobble:0.3, width:0.9, alpha:0.6 });
+  } else {
+    roughStroke(ctx, arcPts(0, hy+headR*0.3, headR*0.22, 0.25, Math.PI-0.35, 8), { seed:seed^0x49, wobble:0.4, width:1.4 });
+    if(spec.tongue)
+      shape(ctx, blobPts(0, hy+headR*0.55, headR*0.11, seed^0x4b, { amp:0.08, sqY:1.3 }), { seed:seed^0x4c, fill:'#e8a0a0', alpha:0.5, width:1.1 });
+  }
+  // collar
+  if(spec.collar){
+    roughStroke(ctx, [[-headR*0.5, hy+headR*0.62],[headR*0.5, hy+headR*0.62]], { seed:seed^0x4d, wobble:0.4, width:2.6, color:spec.collar });
+    dot(ctx, 0, hy+headR*0.72, 2.2, '#d8b25a', 0.9);
+  }
+  ctx.restore();
+}
+
+/* ---------------- nightmare ---------------- */
+function drawRepNightmare(ctx, t, x, gy, spec, idx){
+  const H = spec.h ?? 92;
+  const R = H*0.38;
+  const phase = idx*1.93;
+  const bob = Math.sin(t*1.4 + phase)*1.4;
+  const blink = ((t + phase*0.61) % 4.2) < 0.15;
+  ctx.save(); ctx.translate(x, gy + bob);
+  const seed = spec.seed ?? (3000+idx*53);
+  const bodyC = '#322c26';
+
+  // feet nubs
+  for(const s of [-1,1])
+    roughStroke(ctx, arcPts(s*R*0.4, -2, R*0.14, Math.PI, Math.PI*2, 8), { seed:seed+s*61, wobble:0.5, width:2 });
+
+  // body shape
+  const shapeKind = spec.shape ?? 'round';
+  const bodyCY = -(R + 4);
+  const bPts = shapeKind === 'tall' ? blobPts(0, bodyCY, R, seed^0x62, { amp:0.05, sqX:0.85, sqY:1.15 })
+           : shapeKind === 'wide' ? blobPts(0, bodyCY, R, seed^0x62, { amp:0.05, sqX:1.25, sqY:0.85 })
+           : blobPts(0, bodyCY, R, seed^0x62, { amp:0.07 });
+  // dark dense fill: wash + two hatch passes at different angles
+  washFill(ctx, bPts, bodyC, { seed:seed^0x63, alpha:0.35, bleed:1.6, layers:4 });
+  hatchFill(ctx, bPts, { seed:seed^0x64, gap:3.0, alpha:0.35, color:bodyC, angle:Math.PI/2 });
+  hatchFill(ctx, bPts, { seed:seed^0x65, gap:4.2, alpha:0.25, color:bodyC, angle:Math.PI/4 });
+  roughStroke(ctx, bPts, { seed:seed^0x66, wobble:1.0, width:1.7, close:true });
+
+  // top feature
+  const topY = bodyCY - R;
+  if(spec.top === 'crack'){
+    const pts = [];
+    for(let i=0;i<=7;i++) pts.push([-R*0.8 + (i/7)*R*1.6, topY + (i%2 ? -R*0.16 : R*0.02)]);
+    roughStroke(ctx, pts, { seed:seed^0x67, wobble:0.5, width:2.2, color:'#e8e4d8' });
+  } else if(spec.top === 'spikes'){
+    const pts = [];
+    for(let i=0;i<=5;i++){
+      pts.push([-R*0.6 + (i/5)*R*1.2, topY+2]);
+      if(i<5) pts.push([-R*0.6 + ((i+0.5)/5)*R*1.2, topY - R*(0.22 + (i%2)*0.12)]);
+    }
+    shape(ctx, pts, { seed:seed^0x67, fill:bodyC, alpha:0.4, width:1.6 });
+  } else if(spec.top === 'horns'){
+    for(const s of [-1,1]){
+      const pts = arcPts(s*R*0.55, topY+R*0.1, R*0.34, -Math.PI*0.8, -Math.PI*1.35, 8);
+      roughStroke(ctx, pts, { seed:seed^0x67+s, wobble:0.6, width:2.6, color:bodyC });
+    }
+  } else if(spec.top === 'shaggy'){
+    // shaggy overhang + long ear-horns
+    const pts = [];
+    for(let i=0;i<=8;i++) pts.push([-R + (i/8)*R*2, topY + R*(0.15 + (i%2)*0.14)]);
+    roughStroke(ctx, pts, { seed:seed^0x67, wobble:0.6, width:2.2, color:bodyC });
+    for(const s of [-1,1])
+      roughStroke(ctx, [[s*R*0.7, topY+R*0.1],[s*R*1.15, topY-R*0.45],[s*R*1.05, topY-R*0.7]],
+        { seed:seed^0x68+s, wobble:0.7, width:3, color:bodyC });
+  } else if(spec.top === 'hood'){
+    shape(ctx, arcPts(0, bodyCY, R*1.12, Math.PI*1.05, Math.PI*1.95, 14)
+      .concat([[R*0.95, bodyCY+R*0.5],[-R*0.95, bodyCY+R*0.5]]),
+      { seed:seed^0x67, fill:'#241f1a', alpha:0.5, width:1.7 });
+  }
+
+  // face
+  const eyeY = bodyCY - R*0.1, eyeDX = R*0.34;
+  if(spec.eyes === 'spiral'){
+    for(const s of [-1,1]){
+      const pts = arcPts(s*eyeDX, eyeY, R*0.16, 0, Math.PI*1.7, 10)
+        .concat(arcPts(s*eyeDX, eyeY, R*0.07, Math.PI*1.7, Math.PI*3.2, 8));
+      roughStroke(ctx, pts, { seed:seed+s*69, wobble:0.3, width:1.5, color:'#e8e4d8' });
+    }
+  } else if(spec.eyes === 'x'){
+    for(const s of [-1,1]){
+      if(blink){ roughStroke(ctx, [[s*eyeDX-5, eyeY],[s*eyeDX+5, eyeY]], { seed:seed+s*69, wobble:0.3, width:1.6, color:'#e8e4d8' }); continue; }
+      roughStroke(ctx, [[s*eyeDX-5, eyeY-5],[s*eyeDX+5, eyeY+5]], { seed:seed+s*69, wobble:0.3, width:1.8, color:'#e8e4d8' });
+      roughStroke(ctx, [[s*eyeDX-5, eyeY+5],[s*eyeDX+5, eyeY-5]], { seed:seed+s*69+1, wobble:0.3, width:1.8, color:'#e8e4d8' });
+    }
+  } else {
+    for(const s of [-1,1]){
+      const er = spec.eyes === 'wide' ? R*0.2 : R*0.16;
+      if(blink){ roughStroke(ctx, [[s*eyeDX-er, eyeY],[s*eyeDX+er, eyeY]], { seed:seed+s*69, wobble:0.3, width:1.5, color:'#e8e4d8' }); continue; }
+      shape(ctx, ellipsePts(s*eyeDX, eyeY, er, er, 12), { seed:seed+s*69, fill:'#e8e4d8', alpha:0.75, width:1.3 });
+      dot(ctx, s*eyeDX, eyeY, er*0.35, PENCIL, 0.9);
+    }
+  }
+  // mouth
+  const my = bodyCY + R*0.35;
+  if(spec.mouth === 'stitched'){
+    roughStroke(ctx, [[-R*0.3, my],[R*0.3, my]], { seed:seed^0x6a, wobble:0.4, width:1.6, color:'#e8e4d8' });
+    for(const mx of [-R*0.18, 0, R*0.18])
+      roughStroke(ctx, [[mx, my-R*0.08],[mx, my+R*0.08]], { seed:seed^0x6a+Math.round(mx*10), wobble:0.2, width:1.3, color:'#e8e4d8' });
+  } else if(spec.mouth === 'grin'){
+    roughStroke(ctx, arcPts(0, my-R*0.1, R*0.4, 0.3, Math.PI-0.3, 10), { seed:seed^0x6a, wobble:0.4, width:1.8, color:'#e8e4d8' });
+    for(let i=0;i<3;i++){
+      const mx = -R*0.2 + i*R*0.2;
+      roughStroke(ctx, [[mx, my-R*0.02],[mx, my+R*0.1]], { seed:seed^0x6a+i+2, wobble:0.2, width:1.2, color:'#e8e4d8' });
+    }
+  } else if(spec.mouth === 'small'){
+    shape(ctx, ellipsePts(0, my, R*0.08, R*0.1, 10), { seed:seed^0x6a, fill:'#e8e4d8', alpha:0.6, width:1.2 });
+  }
+  // holding a white egg
+  if(spec.hold === 'egg'){
+    for(const s of [-1,1])
+      roughStroke(ctx, [[s*R*0.9, bodyCY+R*0.15],[s*R*0.45, my+R*0.25]], { seed:seed^0x6b+s, wobble:0.5, width:2, color:bodyC });
+    shape(ctx, ellipsePts(0, my+R*0.3, R*0.26, R*0.32, 14), { seed:seed^0x6c, fill:'#e8e4d8', alpha:0.85, width:1.6 });
+  }
+  // arms
+  if(spec.arms === 'crossed'){
+    roughStroke(ctx, [[-R*0.85, bodyCY+R*0.1],[R*0.4, my-R*0.1]], { seed:seed^0x6d, wobble:0.5, width:2.2, color:bodyC });
+    roughStroke(ctx, [[R*0.85, bodyCY+R*0.1],[-R*0.4, my-R*0.05]], { seed:seed^0x6e, wobble:0.5, width:2.2, color:bodyC });
+  }
+  ctx.restore();
+}
+</script>
+<script>
+'use strict';
+/* ============================================================
+ * The lineup — authored 1:1-ish against Alberto's sheet:
+ * 2 human rows, dogs, cats, nightmares. Every slot hand-spec'd.
+ * ============================================================ */
+  const ROWS = [
+  { type:'human', y:0.205, specs: [
+    { hair:'topknot', brows:'worried', mouth:'tiny', eyeSkew:0.05, body:{ c:'#6a6a72', stripes:true } },
+    { hair:'spiky', skin:'#e8b890', hands:'phone', mouth:'o', hairC:'#5a5048' },
+    { hat:{ kind:'beret', c:'#5a6b3a' }, skin:'#e0a05a', brows:'angry', mouth:'flat', eyeSkew:0.04, body:{ c:'#3a3430' } },
+    { hat:{ kind:'helmet' }, eyes:'closed', mouth:'smile', body:{ c:'#b9c6cc' } },
+    { hat:{ kind:'swimcap' }, mouth:'zigzag', eyeDX:1.15, body:{ c:'#c9c2a4' } },
+    { hair:'none', extra:'bigears', mouth:'o', eyeSkew:0.06, body:{ c:'#d4b8b0' } },
+  ]},
+  { type:'human', y:0.395, specs: [
+    { hair:'spiky', extra:'freckles', body:{ c:'#b3c2b0', button:true }, mouth:'smile', hairC:'#6b5b48' },
+    { hair:'blindbangs', mouth:'smile', body:{ c:'#c6bed2' }, hairC:'#8a7a68' },
+    { hat:{ kind:'beanie', c:'#a8947a' }, eyes:'sleepy', mouth:'tiny', body:{ c:'#b9c6cc', stripes:true } },
+    { extra:'bigears', extra2:'bignose', hair:'buzz', mouth:'flat', eyeSkew:0.07, body:{ c:'#d8cba8' } },
+    { hair:'shaggy', body:{ c:'#9aa8b4', stripes:true }, mouth:'tiny', hairC:'#3a3430' },
+    { hair:'buzz', brows:'worried', mouth:'o', eyeDX:0.8, body:{ c:'#c9b8c8' } },
+  ]},
+  { type:'dog', y:0.575, specs: [
+    { kind:'dog', ears:'pigtails', coat:'#efe8dc', collar:'#c87a6a', tongue:true },
+    { kind:'dog', ears:'round', coat:'#c8a878' },
+    { kind:'dog', ears:'floppy', earC:'#4a4238', coat:'#efe8dc', stripes:true },
+    { kind:'dog', ears:'floppy', coat:'#d8c8a8', glasses:true },
+    { kind:'dog', ears:'pointy', coat:'#efe8dc', muzzle:'dark' },
+  ]},
+  { type:'cat', y:0.745, specs: [
+    { kind:'cat', ears:'pointy', coat:'#efe8dc', patch:'eye', collar:'#c87a6a' },
+    { kind:'cat', ears:'pointy', coat:'#e8c8b8', wrinkles:true },
+    { kind:'cat', ears:'pointy', earC:'#3a3430', coat:'#efe8dc', patch:'mask' },
+    { kind:'cat', ears:'pointy', coat:'#e8ddc8', xeye:true, stripes:true },
+    { kind:'cat', ears:'pointy', coat:'#d8c8a8', patch:'mask', markC:'#8a7a68' },
+  ]},
+  { type:'nightmare', y:0.905, specs: [
+    { top:'crack', eyes:'round', mouth:'small' },
+    { top:'spikes', eyes:'wide', mouth:'grin' },
+    { top:'horns', eyes:'spiral', mouth:'stitched', arms:'crossed' },
+    { top:'horns', eyes:'x', mouth:'stitched', hold:'egg' },
+    { top:'shaggy', eyes:'x', mouth:'stitched', shape:'wide' },
+    { top:'hood', eyes:'wide', mouth:'grin', shape:'tall' },
+  ]},
+];
+
+const canvas = document.getElementById('cv');
+const BOOT = new URLSearchParams(location.search);
+const BW = parseInt(BOOT.get('w') ?? '0', 10), BH = parseInt(BOOT.get('h') ?? '0', 10);
+if(BW > 0 && BH > 0){ canvas.width = BW; canvas.height = BH; }
+const ctx = canvas.getContext('2d');
+const PAPER = makePaper(canvas.width, canvas.height, 0x51);
+
+// seeded slot positions (slightly irregular, like the sheet)
+const rng = new RNG(4242);
+const SLOTS = [];
+ROWS.forEach((row, ri)=>{
+  const n = row.specs.length;
+  const slots = [];
+  for(let i=0;i<n;i++){
+    const spread = n >= 6 ? 0.165 : 0.19;
+    const fx = (n >= 6 ? 0.085 : 0.115) + i*spread + rng.range(-0.012, 0.012);
+    slots.push({ x: fx*canvas.width, y: row.y*canvas.height + rng.range(-3, 3) });
+  }
+  SLOTS.push(slots);
+});
+
+window.__duration = ()=> 12;
+window.__seek = function(t){
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0,0,W,H);
+  ctx.drawImage(PAPER, 0, 0);
+  const S = W/960;   // layout authored at 960 wide; scale everything
+  ctx.save(); ctx.scale(S, S);
+  const Hw = W/S;    // logical width 960
+  ROWS.forEach((row, ri)=>{
+    const slots = SLOTS[ri];
+    // row line with little standing ticks
+    const ry = slots[0].y/S;
+    roughStroke(ctx, [[20, ry+2],[Hw-20, ry]], { seed:0x61+ri, wobble:2.0, width:1.4, alpha:0.5 });
+    slots.forEach((slot, i)=>{
+      roughStroke(ctx, [[slot.x/S-5, ry+2],[slot.x/S-5, ry+7]], { seed:0x71+ri*10+i, wobble:0.3, width:1.1, alpha:0.5 });
+      const spec = row.specs[i];
+      const draw = row.type === 'human' ? drawRepHuman : row.type === 'nightmare' ? drawRepNightmare : drawRepPet;
+      draw(ctx, t, slot.x/S, slot.y/S, { ...spec, seed: spec.seed ?? (ri*100 + i*17 + 5) }, ri*10+i);
+    });
+  });
+  ctx.restore();
+};
+
+if(BOOT.has('live')){
+  const t0 = performance.now();
+  (function loop(){
+    window.__seek(((performance.now()-t0)/1000) % 12);
+    requestAnimationFrame(loop);
+  })();
+}else{
+  window.__seek(0.01);
+}
+</script>
+</body>
+</html>

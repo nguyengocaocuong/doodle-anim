@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>coding doodles — faces with javascript</title>
+<style>
+  html,body{margin:0;padding:0;background:#e7dfd1;height:100%;overflow:hidden}
+  canvas{display:block;margin:0 auto}
+</style>
+</head>
+<body>
+<canvas id="cv" width="1280" height="900"></canvas>
+<script>
+'use strict';
+/* ============================================================
+ * mannay — neo-expressionist charcoal & pencil doodle portrait
+ * generator, after @mannay's "You can just draw faces with
+ * javascript // coding doodles".
+ *
+ * 100% Canvas 2D code, zero assets. Deterministic in seed & time.
+ * Features:
+ * - Gritty charcoal strokes with endpoint overshoot & pressure
+ * - Curly noodle hair clusters, dense ink masses, cross-hatch, beanies
+ * - Dark smudge eye sockets, chunky glasses, asymmetric glancing eyes
+ * - Minimal angular noses, stubble / sketchy pencil mustaches
+ * - Misregistered offset pastel watercolor accents (blush / ears / hair)
+ * - Deterministic window.__seek(t) (4s loop) + ?live interactive mode
+ * ============================================================ */
+
+/* ---------- seeded PRNG (mulberry32) ---------- */
+function mulberry32(seed){
+  let a = seed >>> 0;
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+class RNG {
+  constructor(seed){ this.f = mulberry32(seed); }
+  next(){ return this.f(); }
+  range(a,b){ return a + (b-a)*this.f(); }
+  int(a,b){ return Math.floor(this.range(a, b+1)); }
+  pick(arr){ return arr[Math.floor(this.f()*arr.length)]; }
+  chance(p){ return this.f() < p; }
+}
+
+function makeNoise1D(seed){
+  const rng = mulberry32(seed);
+  const N = 128, table = new Float32Array(N*2);
+  for(let i=0;i<N;i++) table[i] = rng()*2-1;
+  for(let i=0;i<N;i++) table[N+i] = table[i];
+  return function(t){
+    const i = Math.floor(t), f = t - i;
+    const u = f*f*(3-2*f);
+    return table[i%N] + (table[(i+1)%N] - table[i%N]) * u;
+  };
+}
+
+/* ---------- palette ---------- */
+const CHARCOAL = '#2a2725';
+const CHARCOAL_LIGHT = '#45403c';
+const PENCIL_GRAY = '#635d57';
+
+const PASTELS = {
+  blush: ['#df9892', '#e5a59e', '#d88b83', '#d99c8f'],
+  skinWash: ['#d9b89b', '#e2c5aa', '#cfab8c', '#e4ccb8'],
+  accent: ['#6b7c6d', '#869488', '#b57c68', '#6a8292', '#bf9e68'],
+  hairTint: ['#9c6f5d', '#4d4642', '#363230', '#c29b63', '#6f777d'],
+};
+
+/* ---------- path helpers ---------- */
+function subdivide(pts, step){
+  if(pts.length < 2) return pts.slice();
+  const out = [pts[0].slice()];
+  for(let i=1;i<pts.length;i++){
+    const [x0,y0] = pts[i-1], [x1,y1] = pts[i];
+    const d = Math.hypot(x1-x0, y1-y0);
+    const n = Math.max(1, Math.round(d/step));
+    for(let k=1;k<=n;k++){ const u = k/n; out.push([x0+(x1-x0)*u, y0+(y1-y0)*u]); }
+  }
+  return out;
+}
+
+function wobblePts(pts, seed, mag, close){
+  const nx = makeNoise1D(seed), ny = makeNoise1D(seed+101);
+  return pts.map((p,i)=>{
+    let dx = nx(i*0.38)*mag, dy = ny(i*0.38)*mag;
+    if(close && (i===0 || i===pts.length-1)){ dx = nx(0)*mag; dy = ny(0)*mag; }
+    return [p[0]+dx, p[1]+dy];
+  });
+}
+
+function pathFrom(pts, close){
+  const p = new Path2D();
+  p.moveTo(pts[0][0], pts[0][1]);
+  for(let i=1;i<pts.length;i++) p.lineTo(pts[i][0], pts[i][1]);
+  if(close) p.closePath();
+  return p;
+}
+
+function arcPts(cx, cy, r, a0, a1, n=14){
+  const pts = [];
+  for(let i=0;i<=n;i++){
+    const a = a0 + (a1-a0)*i/n;
+    pts.push([cx + Math.cos(a)*r, cy + Math.sin(a)*r]);
+  }
+  return pts;
+}
+
+function ellipsePts(cx, cy, rx, ry, n=24, rot=0){
+  const pts=[];
+  for(let i=0;i<n;i++){
+    const a = i/n*Math.PI*2;
+    const x = Math.cos(a)*rx, y = Math.sin(a)*ry;
+    pts.push([cx + x*Math.cos(rot)-y*Math.sin(rot), cy + x*Math.sin(rot)+y*Math.cos(rot)]);
+  }
+  return pts;
+}
+
+/* ---------- charcoal stroke engine ---------- */
+function charcoalStroke(ctx, pts, o={}){
+  if(pts.length < 2) return;
+  const seed = o.seed ?? 1;
+  const sub = subdivide(pts, o.step ?? 6);
+  const baseW = o.width ?? 3.2;
+  const alpha = o.alpha ?? 0.9;
+  const color = o.color ?? CHARCOAL;
+  const close = o.close ?? false;
+  const overshoot = o.overshoot ?? (close ? 0 : 4);
+
+  // Extend endpoints slightly for sketchy hand-drawn feel
+  let extended = sub;
+  if(overshoot > 0 && sub.length >= 2){
+    extended = sub.slice();
+    const p0 = sub[0], p1 = sub[1];
+    const pn1 = sub[sub.length-1], pn2 = sub[sub.length-2];
+    const d0 = Math.hypot(p0[0]-p1[0], p0[1]-p1[1]) || 1;
+    const dn = Math.hypot(pn1[0]-pn2[0], pn1[1]-pn2[1]) || 1;
+    extended.unshift([p0[0] + (p0[0]-p1[0])/d0 * overshoot, p0[1] + (p0[1]-p1[1])/d0 * overshoot]);
+    extended.push([pn1[0] + (pn1[0]-pn2[0])/dn * overshoot, pn1[1] + (pn1[1]-pn2[1])/dn * overshoot]);
+  }
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = color;
+
+  // Pass 1: core textured stroke
+  const wp1 = wobblePts(extended, seed, o.wobble ?? 1.3, close);
+  ctx.globalAlpha *= alpha;
+  ctx.lineWidth = baseW;
+  ctx.stroke(pathFrom(wp1, close));
+
+  // Pass 2: gritty ghost pass / pressure re-trace
+  const wp2 = wobblePts(extended, seed + 9187, (o.wobble ?? 1.3)*1.35, close);
+  ctx.globalAlpha *= 0.45;
+  ctx.lineWidth = baseW * 0.65;
+  ctx.stroke(pathFrom(wp2, close));
+
+  ctx.restore();
+}
+
+/* ---------- offset watercolor / pastel tint ---------- */
+function offsetWash(ctx, pts, color, o={}){
+  const seed = o.seed ?? 1;
+  const rng = mulberry32(seed);
+  const ox = (rng() - 0.5) * (o.offset ?? 9);
+  const oy = (rng() - 0.5) * (o.offset ?? 9);
+  const sub = subdivide(pts, 8);
+  const wp = wobblePts(sub, seed + 311, o.wobble ?? 2.2, true).map(p => [p[0] + ox, p[1] + oy]);
+
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.globalAlpha *= o.alpha ?? 0.35;
+  ctx.fill(pathFrom(wp, true));
+  ctx.restore();
+}
+
+/* ---------- charcoal smudge / dark eye patch ---------- */
+function charcoalSmudge(ctx, cx, cy, rx, ry, seed, alpha=0.75){
+  ctx.save();
+  const rng = mulberry32(seed);
+  ctx.fillStyle = CHARCOAL;
+  for(let pass=0; pass<4; pass++){
+    const prx = rx * (0.85 + (rng()-0.5)*0.3);
+    const pry = ry * (0.85 + (rng()-0.5)*0.3);
+    const pox = cx + (rng()-0.5)*4;
+    const poy = cy + (rng()-0.5)*4;
+    const pts = ellipsePts(pox, poy, prx, pry, 16, (rng()-0.5)*0.4);
+    const wp = wobblePts(pts, seed + pass*107, 1.8, true);
+    ctx.globalAlpha = (alpha / 4) * (1.1 - pass*0.1);
+    ctx.fill(pathFrom(wp, true));
+  }
+  ctx.restore();
+}
+
+/* ---------- dot & stipple helper ---------- */
+function dot(ctx, x, y, r, color=CHARCOAL, alpha=0.85){
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+}
+
+/* ---------- paper texture generator ---------- */
+function makePaper(w, h, seed){
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d');
+
+  // Base warm kraft / sketchbook tone
+  ctx.fillStyle = '#e7dfd1';
+  ctx.fillRect(0,0,w,h);
+
+  const rng = mulberry32(seed);
+  // Large atmospheric watercolor blotches
+  for(let i=0;i<8;i++){
+    const x = rng()*w, y = rng()*h, r = 180 + rng()*320;
+    const g = ctx.createRadialGradient(x,y,0,x,y,r);
+    const warm = rng() < 0.6;
+    g.addColorStop(0, warm ? 'rgba(215,198,170,0.22)' : 'rgba(190,185,172,0.18)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x-r,y-r,r*2,r*2);
+  }
+
+  // Gritty paper grain + charcoal specks
+  const img = ctx.getImageData(0,0,w,h);
+  const d = img.data;
+  const n2 = makeNoise1D(seed+88);
+  let idx = 0;
+  for(let y=0;y<h;y++){
+    const rowMottle = n2(y*0.08)*2.5;
+    for(let x=0;x<w;x++){
+      const noise = rowMottle + n2(x*0.015 + y*0.019)*3.5 + (rng()-0.5)*9;
+      d[idx]   = Math.max(0, Math.min(255, d[idx]   + noise));
+      d[idx+1] = Math.max(0, Math.min(255, d[idx+1] + noise));
+      d[idx+2] = Math.max(0, Math.min(255, d[idx+2] + noise*0.85));
+      idx += 4;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+
+  // Soft edge vignette
+  const v = ctx.createRadialGradient(w/2, h/2, Math.min(w,h)*0.38, w/2, h/2, Math.max(w,h)*0.78);
+  v.addColorStop(0, 'rgba(0,0,0,0)');
+  v.addColorStop(1, 'rgba(85,70,52,0.18)');
+  ctx.fillStyle = v;
+  ctx.fillRect(0,0,w,h);
+
+  return cv;
+}
+
+/* ============================================================
+ * MannayFace — Parametric neo-expressionist doodle face
+ * Origin at face center (0,0), nominal radius R ≈ 55.
+ * ============================================================ */
+class MannayFace {
+  constructor(seed){
+    this.seed = seed >>> 0;
+    const rng = new RNG(this.seed);
+    this.rng = rng;
+    this.R = 56;
+
+    // Head silhouette archetype
+    this.headShape = rng.pick(['asymPear', 'wedge', 'bean', 'squircle', 'oblong', 'egg']);
+    this.headW = rng.range(0.88, 1.15);
+    this.headH = rng.range(0.92, 1.22);
+    this.jawAsym = rng.range(-0.15, 0.15);
+
+    // Hair archetype
+    this.hairStyle = rng.pick([
+      'curlyCloud', 'curlyCloud', 'solidCharcoal', 'solidCharcoal',
+      'hatch', 'stipple', 'beanie', 'sidePart', 'wisps', 'bald'
+    ]);
+    this.hairTint = rng.pick(PASTELS.hairTint);
+    this.hairHasTint = rng.chance(0.45);
+
+    // Eyes archetype (asymmetry is king)
+    this.eyeGag = rng.pick([
+      'darkPatchLeft', 'darkPatchRight', 'thickGlasses', 'wireGlasses',
+      'winkLeft', 'winkRight', 'sleepySlits', 'asymDots', 'xEye', 'normalSketch'
+    ]);
+    this.eyeDX = this.R * rng.range(0.34, 0.44);
+    this.eyeY = -this.R * rng.range(0.04, 0.14);
+    this.eyeSkew = rng.range(-3.5, 3.5);
+
+    // Eyebrows
+    this.browStyle = rng.pick(['heavySlanted', 'unibrow', 'singleWiggle', 'dots', 'none']);
+
+    // Nose
+    this.noseStyle = rng.pick(['angularL', 'hook', 'straightLine', 'triangle', 'nostrilDots']);
+    this.noseLen = this.R * rng.range(0.24, 0.42);
+
+    // Mouth & facial hair
+    this.mouthStyle = rng.pick(['pencilMustache', 'smearMustache', 'crookedSmirk', 'tinyDash', 'stubble', 'openSlit']);
+    this.stubbleAmount = rng.chance(0.38) ? rng.int(8, 22) : 0;
+
+    // Ears & accents
+    this.hasLeftEar = rng.chance(0.85);
+    this.hasRightEar = rng.chance(0.85);
+    this.earGreenAccent = rng.chance(0.22);
+    this.blush = rng.chance(0.55);
+    this.blushColor = rng.pick(PASTELS.blush);
+    this.skinWash = rng.chance(0.4) ? rng.pick(PASTELS.skinWash) : null;
+
+    // Animation phase offsets
+    this.blinkOffset = rng.range(0, 4);
+    this.lookDrift = rng.range(-1, 1);
+  }
+
+  /* Compute head contour points */
+  headPoints(){
+    const R = this.R, w = R * this.headW, h = R * this.headH;
+    const s = this.seed ^ 0x111;
+    const n1 = makeNoise1D(s), n2 = makeNoise1D(s + 47);
+    const pts = [];
+    const N = 32;
+
+    for(let i=0;i<N;i++){
+      const a = (i/N) * Math.PI*2;
+      let rx = w, ry = h;
+
+      if(this.headShape === 'asymPear'){
+        const jawFactor = Math.sin(a) > 0 ? (1 + 0.28*Math.sin(a) + this.jawAsym*Math.cos(a)) : 1;
+        rx *= jawFactor; ry *= (1 + 0.08*Math.sin(a));
+      } else if(this.headShape === 'wedge'){
+        const taper = Math.sin(a) > 0 ? (1 - 0.25*Math.sin(a)) : 1.05;
+        rx *= taper;
+      } else if(this.headShape === 'bean'){
+        rx *= (1 + 0.12*Math.cos(a*2));
+        ry *= (1 + 0.1*Math.sin(a));
+      } else if(this.headShape === 'squircle'){
+        const p = Math.pow(Math.abs(Math.cos(a)), 3) + Math.pow(Math.abs(Math.sin(a)), 3);
+        const mod = 1 / Math.pow(p, 1/3) * 0.9;
+        rx *= mod; ry *= mod;
+      } else if(this.headShape === 'oblong'){
+        rx *= 0.82; ry *= 1.25;
+      }
+
+      const jitter = 1 + 0.045 * n1(i*0.45) + 0.03 * n2(i*1.1);
+      pts.push([Math.cos(a) * rx * jitter, Math.sin(a) * ry * jitter]);
+    }
+    return pts;
+  }
+
+  /* Draw curly noodle cloud hair (Mannay's signature) */
+  drawCurlyHair(ctx, headTopY){
+    const R = this.R, s = this.seed ^ 0x222;
+    const rng = new RNG(s);
+    const count = 28;
+
+    if(this.hairHasTint){
+      const tintDome = arcPts(0, headTopY + R*0.4, R*1.05, Math.PI*0.9, Math.PI*2.1, 16)
+        .concat([[R*0.75, headTopY+R*0.5], [-R*0.75, headTopY+R*0.5]]);
+      offsetWash(ctx, tintDome, this.hairTint, { seed:s+99, alpha:0.45, offset:8 });
+    }
+
+    ctx.save();
+    ctx.strokeStyle = CHARCOAL;
+    ctx.lineWidth = 1.8;
+    ctx.lineCap = 'round';
+
+    for(let i=0;i<count;i++){
+      const u = (i / (count-1)) * 2 - 1;
+      const cx = u * R * 0.82 + (rng.next()-0.5)*12;
+      const cy = headTopY + Math.pow(u, 2)*R*0.28 + (rng.next()-0.5)*14;
+      const loopR = rng.range(7, 14);
+
+      const loop = [];
+      const steps = 14;
+      const startAngle = rng.range(0, Math.PI*2);
+      for(let k=0; k<=steps; k++){
+        const ang = startAngle + (k/steps)*Math.PI*2.3;
+        const rad = loopR * (1 - (k/steps)*0.3);
+        loop.push([cx + Math.cos(ang)*rad, cy + Math.sin(ang)*rad]);
+      }
+      charcoalStroke(ctx, loop, { seed:s + i*31, width:1.9, wobble:1.1, alpha:0.88 });
+    }
+    ctx.restore();
+  }
+
+  /* Draw solid rough charcoal hair mass */
+  drawSolidCharcoalHair(ctx, headTopY){
+    const R = this.R, s = this.seed ^ 0x333;
+    const dome = arcPts(0, headTopY + R*0.45, R*1.02, Math.PI*0.95, Math.PI*2.05, 18);
+    const bottomLine = [];
+    const steps = 9;
+    const rng = new RNG(s);
+    for(let i=steps; i>=0; i--){
+      const u = (i/steps)*2 - 1;
+      bottomLine.push([u*R*0.88, headTopY + R*0.48 + (rng.next()-0.5)*10]);
+    }
+    const fullPoly = dome.concat(bottomLine);
+
+    offsetWash(ctx, fullPoly, CHARCOAL, { seed:s, alpha:0.82, wobble:1.8, offset:0 });
+    charcoalStroke(ctx, fullPoly, { seed:s+1, width:2.8, close:true, wobble:1.4 });
+
+    for(let j=0; j<6; j++){
+      const sx = (rng.next()-0.5)*R*1.4;
+      const sy = headTopY + (rng.next()-0.5)*8;
+      charcoalStroke(ctx, [[sx, sy],[sx + (rng.next()-0.5)*8, sy - rng.range(4,10)]], { seed:s+100+j, width:2.2 });
+    }
+  }
+
+  /* Draw diagonal pencil hatching hair */
+  drawHatchHair(ctx, headTopY){
+    const R = this.R, s = this.seed ^ 0x444;
+    const dome = arcPts(0, headTopY + R*0.4, R*0.96, Math.PI*0.98, Math.PI*2.02, 14)
+      .concat([[R*0.75, headTopY+R*0.4], [-R*0.75, headTopY+R*0.4]]);
+
+    if(this.hairHasTint) offsetWash(ctx, dome, this.hairTint, { seed:s+5, alpha:0.35 });
+    charcoalStroke(ctx, dome, { seed:s+6, width:2.0, close:true });
+
+    ctx.save();
+    for(let x = -R*0.8; x <= R*0.8; x += 5.5){
+      const topY = headTopY + Math.pow(x/(R*0.8), 2)*R*0.2;
+      const botY = headTopY + R*0.42;
+      charcoalStroke(ctx, [[x, topY],[x + 6, botY]], { seed:s + Math.round(x*10), width:1.5, alpha:0.65 });
+    }
+    ctx.restore();
+  }
+
+  /* Draw ribbed knit beanie */
+  drawBeanie(ctx, headTopY){
+    const R = this.R, s = this.seed ^ 0x555;
+    const beanieC = PASTELS.accent[(s >>> 3) % PASTELS.accent.length];
+
+    const cap = arcPts(0, headTopY + R*0.35, R*0.95, Math.PI*0.92, Math.PI*2.08, 16)
+      .concat([[R*0.82, headTopY + R*0.32], [-R*0.82, headTopY + R*0.32]]);
+    offsetWash(ctx, cap, beanieC, { seed:s+1, alpha:0.5, offset:4 });
+    charcoalStroke(ctx, cap, { seed:s+2, width:2.8, close:true });
+
+    const brimY = headTopY + R*0.32;
+    const brim = [
+      [-R*0.88, brimY - 6], [R*0.88, brimY - 6],
+      [R*0.88, brimY + 12], [-R*0.88, brimY + 12]
+    ];
+    offsetWash(ctx, brim, beanieC, { seed:s+3, alpha:0.65 });
+    charcoalStroke(ctx, brim, { seed:s+4, width:2.6, close:true });
+
+    for(let x = -R*0.78; x <= R*0.78; x += 7){
+      charcoalStroke(ctx, [[x, brimY - 4],[x, brimY + 10]], { seed:s + Math.round(x*10), width:1.4, alpha:0.7 });
+    }
+  }
+
+  /* Draw side-part receding hairline */
+  drawSidePartHair(ctx, headTopY){
+    const R = this.R, s = this.seed ^ 0x666;
+    const pts = [
+      [-R*0.85, headTopY + R*0.4],
+      [-R*0.65, headTopY - 4],
+      [0, headTopY + 2],
+      [R*0.75, headTopY + R*0.1],
+      [R*0.88, headTopY + R*0.45],
+      [R*0.45, headTopY + R*0.25],
+      [-R*0.2, headTopY + R*0.15],
+      [-R*0.6, headTopY + R*0.35]
+    ];
+    offsetWash(ctx, pts, CHARCOAL, { seed:s, alpha:0.75, offset:0 });
+    charcoalStroke(ctx, pts, { seed:s+1, width:2.6, close:true });
+  }
+
+  /* Draw hair dispatcher */
+  drawHair(ctx, headTopY){
+    switch(this.hairStyle){
+      case 'curlyCloud':    this.drawCurlyHair(ctx, headTopY); break;
+      case 'solidCharcoal': this.drawSolidCharcoalHair(ctx, headTopY); break;
+      case 'hatch':         this.drawHatchHair(ctx, headTopY); break;
+      case 'beanie':        this.drawBeanie(ctx, headTopY); break;
+      case 'sidePart':      this.drawSidePartHair(ctx, headTopY); break;
+      case 'stipple': {
+        const s = this.seed ^ 0x777;
+        const rng = new RNG(s);
+        for(let i=0; i<35; i++){
+          const u = (rng.next()-0.5)*1.6;
+          const x = u * this.R * 0.85;
+          const y = headTopY + Math.pow(u, 2)*this.R*0.25 + rng.range(0, 18);
+          dot(ctx, x, y, rng.range(1.2, 2.2), CHARCOAL, 0.75);
+        }
+        break;
+      }
+      case 'wisps': {
+        const s = this.seed ^ 0x888;
+        const rng = new RNG(s);
+        for(let i=0; i<4; i++){
+          const x = (rng.next()-0.5)*this.R*0.8;
+          charcoalStroke(ctx, [[x, headTopY+2],[x + (rng.next()-0.5)*16, headTopY - rng.range(10,22)]], { seed:s+i*7, width:1.8 });
+        }
+        break;
+      }
+      default: break; // bald
+    }
+  }
+
+  /* Draw ears */
+  drawEars(ctx){
+    const R = this.R, s = this.seed ^ 0x999;
+    const earW = R * 0.18, earH = R * 0.32;
+    const earY = this.eyeY + 2;
+
+    if(this.hasLeftEar){
+      const pts = ellipsePts(-R*this.headW*0.96, earY, earW, earH, 14, -0.15);
+      if(this.earGreenAccent) offsetWash(ctx, pts, PASTELS.accent[0], { seed:s+1, alpha:0.65, offset:3 });
+      charcoalStroke(ctx, pts, { seed:s+2, width:2.2, close:true });
+      charcoalStroke(ctx, arcPts(-R*this.headW*0.96, earY, earW*0.5, Math.PI*0.3, Math.PI*1.5, 8), { seed:s+3, width:1.4 });
+    }
+
+    if(this.hasRightEar){
+      const pts = ellipsePts(R*this.headW*0.96, earY, earW, earH, 14, 0.15);
+      charcoalStroke(ctx, pts, { seed:s+4, width:2.2, close:true });
+      charcoalStroke(ctx, arcPts(R*this.headW*0.96, earY, earW*0.5, -Math.PI*0.5, Math.PI*0.7, 8), { seed:s+5, width:1.4 });
+    }
+  }
+
+  /* Draw eyes, glasses & eyewear */
+  drawEyes(ctx, t){
+    const R = this.R, s = this.seed ^ 0xaaa;
+    const dx = this.eyeDX, ey = this.eyeY;
+    const blink = ((t + this.blinkOffset) % 4.0) < 0.14;
+    const glanceX = Math.sin(t*1.5 + this.blinkOffset)*1.8;
+
+    // Eyebrows
+    const browY = ey - R*0.22;
+    if(this.browStyle === 'unibrow'){
+      charcoalStroke(ctx, [[-dx*1.4, browY + 2], [0, browY - 3], [dx*1.4, browY + 2]], { seed:s+10, width:3.4 });
+    } else if(this.browStyle === 'heavySlanted'){
+      charcoalStroke(ctx, [[-dx*1.3, browY - 2], [-dx*0.5, browY + 3]], { seed:s+11, width:2.8 });
+      charcoalStroke(ctx, [[dx*0.5, browY + 3], [dx*1.3, browY - 2]], { seed:s+12, width:2.8 });
+    } else if(this.browStyle === 'singleWiggle'){
+      charcoalStroke(ctx, [[-dx*1.2, browY], [-dx*0.6, browY - 2]], { seed:s+13, width:2.2 });
+      charcoalStroke(ctx, [[dx*0.6, browY - 4], [dx*1.2, browY - 1]], { seed:s+14, width:2.2 });
+    }
+
+    const leftEyeX = -dx, rightEyeX = dx;
+    const leftEyeY = ey - this.eyeSkew, rightEyeY = ey + this.eyeSkew;
+
+    // 1. Dark charcoal eye patch
+    if(this.eyeGag === 'darkPatchLeft' || this.eyeGag === 'darkPatchRight'){
+      const isLeft = this.eyeGag === 'darkPatchLeft';
+      const patchX = isLeft ? leftEyeX : rightEyeX;
+      const patchY = isLeft ? leftEyeY : rightEyeY;
+      const otherX = isLeft ? rightEyeX : leftEyeX;
+      const otherY = isLeft ? rightEyeY : leftEyeY;
+
+      charcoalSmudge(ctx, patchX, patchY, R*0.24, R*0.22, s+20, 0.85);
+
+      if(blink){
+        charcoalStroke(ctx, [[otherX-R*0.14, otherY],[otherX+R*0.14, otherY]], { seed:s+21, width:2.2 });
+      } else {
+        dot(ctx, otherX + glanceX, otherY, R*0.06, CHARCOAL, 0.95);
+        charcoalStroke(ctx, arcPts(otherX, otherY - R*0.04, R*0.12, Math.PI*1.05, Math.PI*1.95, 8), { seed:s+22, width:1.8 });
+      }
+      return;
+    }
+
+    // 2. Chunky glasses
+    if(this.eyeGag === 'thickGlasses' || this.eyeGag === 'wireGlasses'){
+      const isThick = this.eyeGag === 'thickGlasses';
+      const gw = R * 0.28, gh = R * (isThick ? 0.24 : 0.28);
+      const strokeW = isThick ? 3.8 : 1.8;
+
+      for(const side of [-1, 1]){
+        const gx = side * dx;
+        const pts = ellipsePts(gx, ey, gw, gh, 16);
+        charcoalStroke(ctx, pts, { seed:s + side*17, width:strokeW, close:true });
+        if(!blink){
+          dot(ctx, gx + glanceX, ey, R*0.055, CHARCOAL, 0.9);
+        }
+      }
+      charcoalStroke(ctx, [[-dx + gw*0.9, ey - gh*0.15], [dx - gw*0.9, ey - gh*0.15]], { seed:s+33, width:strokeW });
+      charcoalStroke(ctx, [[-dx - gw*0.95, ey], [-this.R*this.headW*0.9, ey + 2]], { seed:s+34, width:strokeW*0.75 });
+      charcoalStroke(ctx, [[dx + gw*0.95, ey], [this.R*this.headW*0.9, ey + 2]], { seed:s+35, width:strokeW*0.75 });
+      return;
+    }
+
+    // 3. X Eyes
+    if(this.eyeGag === 'xEye'){
+      for(const side of [-1, 1]){
+        const ex = side * dx, y = side < 0 ? leftEyeY : rightEyeY;
+        const er = R * 0.12;
+        charcoalStroke(ctx, [[ex-er, y-er],[ex+er, y+er]], { seed:s+side*41, width:2.6 });
+        charcoalStroke(ctx, [[ex-er, y+er],[ex+er, y-er]], { seed:s+side*43, width:2.6 });
+      }
+      return;
+    }
+
+    // 4. Asymmetric wink / Sleepy / Normal eyes
+    for(const side of [-1, 1]){
+      const ex = side * dx;
+      const eySide = side < 0 ? leftEyeY : rightEyeY;
+      const isWinkSide = (this.eyeGag === 'winkLeft' && side < 0) || (this.eyeGag === 'winkRight' && side > 0);
+
+      if(blink || isWinkSide){
+        const arc = arcPts(ex, eySide + R*0.04, R*0.15, Math.PI*1.15, Math.PI*1.85, 8);
+        charcoalStroke(ctx, arc, { seed:s + side*51, width:2.4 });
+      } else if(this.eyeGag === 'sleepySlits'){
+        charcoalStroke(ctx, [[ex-R*0.16, eySide-R*0.02],[ex+R*0.16, eySide+R*0.02]], { seed:s+side*52, width:2.6 });
+        dot(ctx, ex + glanceX, eySide + R*0.06, R*0.05, CHARCOAL, 0.9);
+        charcoalStroke(ctx, arcPts(ex, eySide+R*0.08, R*0.14, 0.2, Math.PI-0.2, 8), { seed:s+side*53, width:1.2, alpha:0.5 });
+      } else {
+        const er = R * 0.14;
+        const pts = ellipsePts(ex, eySide, er, er*1.08, 14);
+        charcoalStroke(ctx, pts, { seed:s+side*54, width:1.9, close:true });
+        dot(ctx, ex + glanceX + this.lookDrift*2, eySide + 1, er*0.44, CHARCOAL, 0.92);
+      }
+    }
+  }
+
+  /* Draw angular minimal nose */
+  drawNose(ctx){
+    const R = this.R, s = this.seed ^ 0xbbb;
+    const ny = this.eyeY + R*0.15;
+    const len = this.noseLen;
+
+    switch(this.noseStyle){
+      case 'angularL': {
+        const pts = [[-2, ny], [R*0.06, ny + len], [-R*0.12, ny + len + 2]];
+        charcoalStroke(ctx, pts, { seed:s, width:2.6 });
+        break;
+      }
+      case 'hook': {
+        const pts = [[0, ny], [R*0.12, ny + len*0.7], [-R*0.08, ny + len]];
+        charcoalStroke(ctx, pts, { seed:s, width:2.4 });
+        break;
+      }
+      case 'straightLine': {
+        charcoalStroke(ctx, [[0, ny], [0, ny + len], [R*0.08, ny + len]], { seed:s, width:2.4 });
+        break;
+      }
+      case 'triangle': {
+        const pts = [[-R*0.06, ny+len*0.6], [R*0.1, ny+len], [-R*0.08, ny+len]];
+        offsetWash(ctx, pts, CHARCOAL, { seed:s, alpha:0.75 });
+        charcoalStroke(ctx, pts, { seed:s+1, width:2.0, close:true });
+        break;
+      }
+      case 'nostrilDots': {
+        dot(ctx, -R*0.06, ny + len*0.8, 1.8, CHARCOAL, 0.85);
+        dot(ctx, R*0.08, ny + len*0.8, 1.8, CHARCOAL, 0.85);
+        break;
+      }
+    }
+  }
+
+  /* Draw mouth & facial hair */
+  drawMouth(ctx){
+    const R = this.R, s = this.seed ^ 0xccc;
+    const my = this.eyeY + this.noseLen + R*0.34;
+    const mw = R * 0.28;
+
+    if(this.mouthStyle === 'pencilMustache'){
+      for(let i=0; i<8; i++){
+        const u = (i/7)*2 - 1;
+        charcoalStroke(ctx, [[u*mw*0.8, my - 6], [u*mw*0.8 + 2, my - 1]], { seed:s+i, width:1.5, alpha:0.75 });
+      }
+      charcoalStroke(ctx, [[-mw*0.75, my+3],[mw*0.75, my+3]], { seed:s+10, width:2.2 });
+      return;
+    }
+
+    if(this.mouthStyle === 'smearMustache'){
+      const smear = [
+        [-mw*0.9, my-4], [0, my-7], [mw*0.9, my-4],
+        [mw*0.7, my+3], [0, my+1], [-mw*0.7, my+3]
+      ];
+      offsetWash(ctx, smear, CHARCOAL, { seed:s, alpha:0.82 });
+      charcoalStroke(ctx, smear, { seed:s+1, width:2.2, close:true });
+      charcoalStroke(ctx, [[-mw*0.7, my+6],[mw*0.7, my+6]], { seed:s+2, width:2.0 });
+      return;
+    }
+
+    if(this.mouthStyle === 'crookedSmirk'){
+      charcoalStroke(ctx, [[-mw*0.6, my+2], [0, my], [mw*0.7, my-6]], { seed:s, width:2.5 });
+      charcoalStroke(ctx, [[mw*0.65, my-9], [mw*0.75, my-3]], { seed:s+1, width:2.0 });
+    } else if(this.mouthStyle === 'openSlit'){
+      const slit = ellipsePts(0, my, mw*0.5, mw*0.25, 12);
+      offsetWash(ctx, slit, '#4a3834', { seed:s, alpha:0.75 });
+      charcoalStroke(ctx, slit, { seed:s+1, width:2.2, close:true });
+    } else {
+      charcoalStroke(ctx, [[-mw*0.4, my],[mw*0.4, my]], { seed:s, width:2.4 });
+    }
+
+    if(this.stubbleAmount > 0){
+      const rng = new RNG(s ^ 0xddd);
+      for(let k=0; k<this.stubbleAmount; k++){
+        const sx = (rng.next()-0.5)*R*0.9;
+        const sy = my + rng.range(6, R*0.38);
+        dot(ctx, sx, sy, rng.range(0.9, 1.4), CHARCOAL, 0.55);
+      }
+    }
+  }
+
+  /* Main draw call */
+  draw(ctx, t, cx, cy, scale=1){
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(scale, scale);
+
+    const headPts = this.headPoints();
+    const headTopY = -this.R * this.headH;
+
+    // 1. Skin wash
+    if(this.skinWash){
+      offsetWash(ctx, headPts, this.skinWash, { seed:this.seed^0x101, alpha:0.32, offset:6 });
+    }
+
+    // 2. Blush accents
+    if(this.blush){
+      const blushR = this.R * 0.28;
+      const blushY = this.eyeY + this.R*0.28;
+      for(const side of [-1, 1]){
+        const bx = side * this.eyeDX * 1.15;
+        const bpts = ellipsePts(bx, blushY, blushR, blushR*0.7, 12);
+        offsetWash(ctx, bpts, this.blushColor, { seed:this.seed + side*37, alpha:0.42, offset:7 });
+      }
+    }
+
+    // 3. Head outline
+    charcoalStroke(ctx, headPts, { seed:this.seed^0x102, width:3.4, close:true, wobble:1.4 });
+
+    // 4. Ears
+    this.drawEars(ctx);
+
+    // 5. Hair
+    this.drawHair(ctx, headTopY);
+
+    // 6. Eyes & Eyewear
+    this.drawEyes(ctx, t);
+
+    // 7. Nose
+    this.drawNose(ctx);
+
+    // 8. Mouth & Facial hair
+    this.drawMouth(ctx);
+
+    ctx.restore();
+  }
+}
+
+/* ============================================================
+ * Page & Grid Layout Engine
+ * ============================================================ */
+const canvas = document.getElementById('cv');
+const ctx = canvas.getContext('2d');
+const params = new URLSearchParams(location.search);
+
+let SEED = parseInt(params.get('seed') ?? '42', 10);
+const COLS = parseInt(params.get('cols') ?? '6', 10);
+const ROWS = parseInt(params.get('rows') ?? '4', 10);
+const LOOP = 4.0;
+const MONO = '"Courier New", ui-monospace, monospace';
+
+let FACES = [], PAPER = null, BTN = null;
+
+function deal(seed){
+  SEED = seed;
+  const rng = new RNG(SEED);
+  FACES = [];
+  const total = COLS * ROWS;
+  for(let i=0; i<total; i++){
+    FACES.push({
+      face: new MannayFace((SEED * 7919 + i * 104729) >>> 0),
+      rot: rng.range(-0.04, 0.04),
+      scaleJitter: rng.range(0.92, 1.06)
+    });
+  }
+  PAPER = makePaper(canvas.width, canvas.height, SEED ^ 0xfeed);
+}
+
+/* Header: "// coding doodles — faces with javascript" */
+function drawHeader(ctx, W){
+  ctx.save();
+  ctx.font = `700 22px ${MONO}`;
+  ctx.fillStyle = CHARCOAL;
+  ctx.globalAlpha *= 0.85;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+
+  const title = '// coding doodles';
+  const sub = 'faces with javascript';
+
+  ctx.fillText(title, 48, 38);
+
+  ctx.font = `400 16px ${MONO}`;
+  ctx.globalAlpha *= 0.65;
+  ctx.fillText(sub, 48, 66);
+
+  ctx.font = `600 14px ${MONO}`;
+  ctx.textAlign = 'right';
+  ctx.fillText(`seed: ${SEED}  |  ${COLS}x${ROWS}`, W - 48, 42);
+  ctx.restore();
+}
+
+/* Bottom reshuffle button for ?live mode */
+function drawButton(ctx, W, H){
+  const label = 'NEW SHEET';
+  ctx.save();
+  ctx.font = `700 15px ${MONO}`;
+  try{ ctx.letterSpacing = '2px'; }catch(e){}
+  const tw = ctx.measureText(label).width;
+  const bw = tw + 48, bh = 36, bx = W/2 - bw/2, by = H - 52;
+  BTN = { x:bx, y:by, w:bw, h:bh };
+
+  ctx.strokeStyle = CHARCOAL;
+  ctx.lineWidth = 1.8;
+  ctx.globalAlpha *= 0.6;
+  ctx.beginPath();
+  ctx.roundRect(bx, by, bw, bh, 8);
+  ctx.stroke();
+
+  ctx.fillStyle = CHARCOAL;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, W/2, by + bh/2 + 1);
+  ctx.restore();
+}
+
+/* Frame render API */
+window.__duration = ()=> LOOP;
+window.__seek = function(t){
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0,0,W,H);
+  ctx.drawImage(PAPER, 0, 0);
+
+  drawHeader(ctx, W);
+
+  const top = 100, bottom = H - 64;
+  const left = 32, right = W - 32;
+  const gridW = right - left, gridH = bottom - top;
+  const cw = gridW / COLS, ch = gridH / ROWS;
+
+  FACES.forEach(({face, rot, scaleJitter}, i)=>{
+    const c = i % COLS;
+    const r = Math.floor(i / COLS);
+    const cx = left + (c + 0.5)*cw;
+    const cy = top + (r + 0.5)*ch;
+    const baseScale = Math.min(cw, ch) / 155;
+    const finalScale = baseScale * scaleJitter;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(rot);
+    ctx.translate(-cx, -cy);
+    face.draw(ctx, t, cx, cy, finalScale);
+    ctx.restore();
+  });
+
+  drawButton(ctx, W, H);
+};
+
+/* Initial generation */
+deal(SEED);
+
+/* Live preview loop */
+if(params.has('live')){
+  const t0 = performance.now();
+  (function loop(){
+    window.__seek(((performance.now()-t0)/1000) % LOOP);
+    requestAnimationFrame(loop);
+  })();
+
+  const reshuffle = (mx, my)=>{
+    if(!BTN) return;
+    if(mx >= BTN.x && mx <= BTN.x+BTN.w && my >= BTN.y && my <= BTN.y+BTN.h){
+      deal(Math.floor(Math.random()*1e9));
+    }
+  };
+
+  canvas.addEventListener('click', e=>{
+    const r = canvas.getBoundingClientRect();
+    reshuffle((e.clientX-r.left) * canvas.width/r.width, (e.clientY-r.top) * canvas.height/r.height);
+  });
+  window.addEventListener('keydown', ()=> deal(Math.floor(Math.random()*1e9)));
+}else{
+  window.__seek(0.01);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+{
+  "name": "doodle-anim",
+  "version": "1.0.0",
+  "description": "Procedural hand-drawn character animation pipeline — 100% Canvas 2D & Vanilla JS, zero image assets, deterministic rendering.",
+  "type": "module",
+  "main": "scripts/capture.mjs",
+  "scripts": {
+    "preview": "open templates/doodle.html?live",
+    "preview:friends": "open templates/friends.html?live",
+    "preview:mannay": "open templates/mannay.html?live",
+    "preview:faces": "open templates/faces.html?live",
+    "capture:doodle": "node scripts/capture.mjs --page templates/doodle.html --out out/demo --fps 30 --dur 12 --seed 7",
+    "render:explainer": "node scripts/render-explainer.mjs --script templates/story.example.json --out out/explainer_demo"
+  },
+  "keywords": [
+    "canvas-2d",
+    "procedural-animation",
+    "doodle-animation",
+    "hand-drawn",
+    "generative-art",
+    "agent-skill",
+    "claude-skill",
+    "antigravity"
+  ],
+  "author": "feitangyuan",
+  "license": "MIT",
+  "dependencies": {
+    "playwright": "^1.40.0"
+  }
+}

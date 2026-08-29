@@ -1,0 +1,1362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>explainer</title>
+<style>
+  html,body{margin:0;padding:0;background:#0e0c0a;height:100%;overflow:hidden}
+  canvas{display:block;margin:0 auto}
+</style>
+</head>
+<body>
+<canvas id="cv" width="1280" height="720"></canvas>
+<script>
+'use strict';
+/* ============================================================
+ * explainer — Zenn-style doodle science-explainer engine.
+ * Dark moody bg, thick-outline white characters, keyframed
+ * camera (pan/push), per-shot action beats, cross-dissolve
+ * cuts, plain white karaoke captions. Deterministic in t.
+ * ============================================================ */
+
+function mulberry32(seed){
+  let a = seed >>> 0;
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+class RNG {
+  constructor(seed){ this.f = mulberry32(seed); }
+  next(){ return this.f(); }
+  range(a,b){ return a + (b-a)*this.f(); }
+  int(a,b){ return Math.floor(this.range(a, b+1)); }
+  pick(arr){ return arr[Math.floor(this.f()*arr.length)]; }
+  chance(p){ return this.f() < p; }
+}
+function makeNoise1D(seed){
+  const rng = mulberry32(seed);
+  const N = 128, table = new Float32Array(N*2);
+  for(let i=0;i<N;i++) table[i] = rng()*2-1;
+  for(let i=0;i<N;i++) table[N+i] = table[i];
+  return function(t){
+    const i = Math.floor(t), f = t - i;
+    const u = f*f*(3-2*f);
+    return table[i%N] + (table[(i+1)%N] - table[i%N]) * u;
+  };
+}
+
+const clamp01 = x => Math.max(0, Math.min(1, x));
+const smooth = x => { x = clamp01(x); return x*x*(3-2*x); };
+const easeInOut = x => { x = clamp01(x); return x<0.5 ? 2*x*x : 1-Math.pow(-2*x+2,2)/2; };
+const easeOutBack = x => { const c=1.70158; x = clamp01(x); return 1 + (c+1)*Math.pow(x-1,3) + c*Math.pow(x-1,2); };
+
+const INK = '#141210';       // near-black outline
+const PAPER_W = '#f4efe4';   // character white
+
+function subdivide(pts, step){
+  if(pts.length < 2) return pts.slice();
+  const out = [pts[0].slice()];
+  for(let i=1;i<pts.length;i++){
+    const [x0,y0] = pts[i-1], [x1,y1] = pts[i];
+    const d = Math.hypot(x1-x0, y1-y0);
+    const n = Math.max(1, Math.round(d/step));
+    for(let k=1;k<=n;k++){
+      const u = k/n;
+      out.push([x0+(x1-x0)*u, y0+(y1-y0)*u]);
+    }
+  }
+  return out;
+}
+function wobblePts(pts, seed, mag, close){
+  const nx = makeNoise1D(seed), ny = makeNoise1D(seed+101);
+  const scale = 0.35;
+  return pts.map((p,i)=>{
+    let dx = nx(i*scale)*mag, dy = ny(i*scale)*mag;
+    if(close && (i===0 || i===pts.length-1)){ dx = nx(0)*mag; dy = ny(0)*mag; }
+    return [p[0]+dx, p[1]+dy];
+  });
+}
+function pathFrom(pts, close){
+  const p = new Path2D();
+  p.moveTo(pts[0][0], pts[0][1]);
+  for(let i=1;i<pts.length;i++) p.lineTo(pts[i][0], pts[i][1]);
+  if(close) p.closePath();
+  return p;
+}
+
+// Thick single-pass wobble stroke (Zenn lines are bold, not sketchy-double)
+function roughStroke(ctx, pts, o={}){
+  const seed  = o.seed  ?? 1;
+  const wob   = o.wobble ?? 1.6;
+  const close = o.close ?? false;
+  const width = o.width ?? 5;
+  const alpha = o.alpha ?? 1;
+  const color = o.color ?? INK;
+  const sub = subdivide(pts, 8);
+  ctx.save();
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.strokeStyle = color;
+  for(let pass=0; pass<2; pass++){
+    const wp = wobblePts(sub, seed + pass*104729, wob*(pass? 0.8:1), close);
+    ctx.globalAlpha *= pass ? alpha*0.35 : alpha;
+    ctx.lineWidth = pass ? width*0.65 : width;
+    ctx.stroke(pathFrom(wp, close));
+  }
+  ctx.restore();
+}
+
+// Flat fill with slight hand-drawn edge wobble (not watercolor)
+function flatFill(ctx, pts, color, o={}){
+  const seed = o.seed ?? 1;
+  const sub = subdivide(pts, 9);
+  const wp = wobblePts(sub, seed+55, o.wobble ?? 1.2, true);
+  ctx.save();
+  ctx.globalAlpha *= o.alpha ?? 1;
+  ctx.fillStyle = color;
+  ctx.fill(pathFrom(wp, true));
+  ctx.restore();
+}
+
+function shape(ctx, pts, o={}){
+  if(o.fill) flatFill(ctx, pts, o.fill, o);
+  roughStroke(ctx, pts, { ...o, close:true });
+}
+function ellipsePts(cx,cy,rx,ry,n=26,rot=0){
+  const pts=[];
+  for(let i=0;i<n;i++){
+    const a = i/n*Math.PI*2;
+    const x = Math.cos(a)*rx, y = Math.sin(a)*ry;
+    pts.push([cx + x*Math.cos(rot)-y*Math.sin(rot), cy + x*Math.sin(rot)+y*Math.cos(rot)]);
+  }
+  return pts;
+}
+function blobPts(cx, cy, r, seed, opts={}){
+  const n = opts.n ?? 30;
+  const n1 = makeNoise1D(seed), n2 = makeNoise1D(seed+31);
+  const amp = opts.amp ?? 0.06, sqX = opts.sqX ?? 1, sqY = opts.sqY ?? 1;
+  const pts = [];
+  for(let i=0;i<n;i++){
+    const a = i/n*Math.PI*2;
+    const rr = r * (1 + amp*n1(i*0.55) + amp*0.5*n2(i*1.3));
+    pts.push([cx + Math.cos(a)*rr*sqX, cy + Math.sin(a)*rr*sqY]);
+  }
+  return pts;
+}
+function arcPts(cx, cy, r, a0, a1, n=12){
+  const pts = [];
+  for(let i=0;i<=n;i++){
+    const a = a0 + (a1-a0)*i/n;
+    pts.push([cx + Math.cos(a)*r, cy + Math.sin(a)*r]);
+  }
+  return pts;
+}
+function dot(ctx, x, y, r, color, alpha=1){
+  ctx.save();
+  ctx.globalAlpha *= alpha; ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+/* ---------- dark moody background ---------- */
+function makeBackdrop(w, h, seed, base='#241d16', glow='#3a2f22'){
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = base;
+  ctx.fillRect(0,0,w,h);
+  const rng = mulberry32(seed);
+  for(let i=0;i<8;i++){
+    const x = rng()*w, y = rng()*h, r = 150+rng()*320;
+    const g = ctx.createRadialGradient(x,y,0,x,y,r);
+    g.addColorStop(0, glow + '55');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x-r,y-r,r*2,r*2);
+  }
+  const img = ctx.getImageData(0,0,w,h);
+  const d = img.data;
+  const n2 = makeNoise1D(seed+77);
+  let i = 0;
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      const g = n2(x*0.013 + y*0.017)*4 + (rng()-0.5)*8;
+      d[i] += g; d[i+1] += g; d[i+2] += g;
+      i += 4;
+    }
+  }
+  ctx.putImageData(img,0,0);
+  const v = ctx.createRadialGradient(w/2,h/2, Math.min(w,h)*0.25, w/2,h/2, Math.max(w,h)*0.72);
+  v.addColorStop(0,'rgba(0,0,0,0)');
+  v.addColorStop(1,'rgba(0,0,0,0.55)');
+  ctx.fillStyle = v;
+  ctx.fillRect(0,0,w,h);
+  return cv;
+}
+</script>
+<script>
+'use strict';
+/* ============================================================
+ * The Dude — Zenn-style white blob-head stick character.
+ * Local space: origin at hip, +y down. scale 1 = ~150px tall.
+ * modes: stand | walk | sit | lie
+ * arms (stand/sit): down | point | scratch | wave
+ * ============================================================ */
+class Dude {
+  constructor(seed){
+    const rng = new RNG(seed);
+    this.seed = seed;
+    this.headR = 46;
+    this.blinkPeriod = rng.range(2.6, 4.4);
+    this.blinkOff = rng.range(0, 5);
+    this.swayOff = rng.range(0, Math.PI*2);
+  }
+  blinking(t){ return ((t + this.blinkOff) % this.blinkPeriod) < 0.12; }
+
+  drawHead(ctx, t, expr='neutral', lookDir=1){
+    const r = this.headR, blink = this.blinking(t);
+    shape(ctx, blobPts(0, -120, r, this.seed^0x11, { amp:0.03 }), { seed:this.seed^0x12, fill:PAPER_W, width:6 });
+
+    const eyeY = -126, eyeDX = 17;
+    for(const s of [-1,1]){
+      const ex = s*eyeDX;
+      if(blink){
+        roughStroke(ctx, [[ex-8, eyeY],[ex+8, eyeY]], { seed:this.seed+s*7, wobble:0.5, width:4 });
+        continue;
+      }
+      const er = expr === 'shocked' ? 11 : 9;
+      shape(ctx, ellipsePts(ex, eyeY, er*0.72, er, 14), { seed:this.seed^0x13+s, fill:'#ffffff', width:4.5, wobble:0.8 });
+      const pupOff = expr === 'confused' ? [lookDir*2.5, 1] : [lookDir*3, 0.5];
+      dot(ctx, ex + pupOff[0], eyeY + pupOff[1], 2.8, INK);
+    }
+    const brow = { confused:[-3.5, 2], shocked:[-5,-5], happy:[-2,-2], sad:[3,-3], neutral:[0,0] }[expr] ?? [0,0];
+    for(const s of [-1,1]){
+      const tilt = s<0 ? brow[0] : brow[1];
+      roughStroke(ctx, [[s*eyeDX-8, eyeY-16-tilt],[s*eyeDX+8, eyeY-16+tilt]], { seed:this.seed+s*29, wobble:0.5, width:4.5 });
+    }
+    const my = -100;
+    if(expr === 'happy')
+      roughStroke(ctx, arcPts(0, my-4, 12, 0.3, Math.PI-0.3), { seed:this.seed^0x16, wobble:0.6, width:4.5 });
+    else if(expr === 'shocked')
+      shape(ctx, ellipsePts(0, my+2, 6, 8, 12), { seed:this.seed^0x16, fill:INK, width:3 });
+    else if(expr === 'sad')
+      roughStroke(ctx, arcPts(0, my+10, 10, Math.PI+0.3, -0.3), { seed:this.seed^0x16, wobble:0.6, width:4.5 });
+    else if(expr === 'confused')
+      roughStroke(ctx, [[-10, my+3],[-3, my],[3, my+4],[10, my+1]], { seed:this.seed^0x16, wobble:0.4, width:4.5 });
+    else
+      roughStroke(ctx, [[-9, my],[9, my]], { seed:this.seed^0x16, wobble:0.5, width:4.5 });
+  }
+
+  limb(ctx, pts, seed, width=5.5){
+    roughStroke(ctx, pts, { seed, wobble:1.0, width, color:INK });
+  }
+
+  // one arm gesture for stand/sit; side = facing dir
+  gestArm(ctx, t, kind, dir, shoulder){
+    const [sx, sy] = shoulder;
+    const wig = Math.sin(t*9)*4;
+    if(kind === 'point'){
+      this.limb(ctx, [[sx,sy],[sx+dir*28,sy-4],[sx+dir*52,sy+2]], this.seed^0x26);
+    } else if(kind === 'scratch'){
+      this.limb(ctx, [[sx,sy],[sx+dir*24,sy-18],[sx+dir*10,sy-44+wig]], this.seed^0x26);
+    } else if(kind === 'wave'){
+      const w2 = Math.sin(t*6)*9;
+      this.limb(ctx, [[sx,sy],[sx+dir*24,sy-30],[sx+dir*(26+w2*0.5),sy-58+w2*0.4]], this.seed^0x26);
+    } else if(kind === 'hold'){
+      // forearm raised, hand open in front of the chest (holding something)
+      this.limb(ctx, [[sx,sy],[sx+dir*18,sy+16],[sx+dir*24,sy-10]], this.seed^0x26);
+    } else {
+      this.limb(ctx, [[sx,sy],[sx+dir*14,sy+22],[sx+dir*17,sy+48]], this.seed^0x26);
+    }
+  }
+
+  draw(ctx, t, pose={}){
+    const mode = pose.mode ?? 'stand';
+    const expr = pose.expr ?? 'neutral';
+    const dir = pose.lookDir ?? 1;
+    const arm = pose.arm ?? (pose.point ? 'point' : 'down');
+    const bob = Math.sin(t*1.5 + this.swayOff)*1.6;
+    ctx.save();
+
+    if(mode === 'stand'){
+      ctx.translate(0, bob);
+      this.limb(ctx, [[0,0],[-4,38],[-7,72]], this.seed^0x21);
+      this.limb(ctx, [[0,0],[5,38],[9,72]], this.seed^0x22);
+      roughStroke(ctx, [[-7,72],[-16,72]], { seed:this.seed^0x23, wobble:0.5, width:5.5 });
+      roughStroke(ctx, [[9,72],[18,72]], { seed:this.seed^0x24, wobble:0.5, width:5.5 });
+      this.limb(ctx, [[0,0],[0,-74]], this.seed^0x25);
+      this.gestArm(ctx, t, arm, dir, [0,-66]);
+      // second arm: custom gesture or idle
+      if(pose.arm2) this.gestArm(ctx, t, pose.arm2, -dir, [0,-66]);
+      else this.limb(ctx, [[0,-66],[-dir*13,-40],[-dir*16,-16]], this.seed^0x27);
+      ctx.scale(dir, 1);
+      this.drawHead(ctx, t, expr, 1);
+    }
+    else if(mode === 'walk'){
+      const ph = t*7 + this.swayOff;
+      const sw = Math.sin(ph)*13;
+      const lift = Math.abs(Math.cos(ph))*3.5;
+      ctx.translate(0, -lift);
+      // swinging legs + feet
+      this.limb(ctx, [[0,0],[-sw*0.5, 38],[-sw, 70]], this.seed^0x21);
+      this.limb(ctx, [[0,0],[ sw*0.5, 38],[ sw, 70]], this.seed^0x22);
+      roughStroke(ctx, [[-sw,70],[-sw-8,70]], { seed:this.seed^0x23, wobble:0.5, width:5.5 });
+      roughStroke(ctx, [[ sw,70],[ sw+8,70]], { seed:this.seed^0x24, wobble:0.5, width:5.5 });
+      // torso leaning into the walk
+      this.limb(ctx, [[0,0],[3,-74]], this.seed^0x25);
+      // arms counter-swing
+      const aw = Math.sin(ph)*9;
+      this.limb(ctx, [[3,-66],[-aw*0.6-10,-40],[-aw-12,-16]], this.seed^0x26);
+      this.limb(ctx, [[3,-66],[ aw*0.6+12,-40],[ aw+14,-16]], this.seed^0x27);
+      ctx.translate(3, 0);
+      ctx.scale(dir, 1);
+      this.drawHead(ctx, t, expr, 1);
+    }
+    else if(mode === 'sit'){
+      ctx.translate(0, bob*0.6);
+      this.limb(ctx, [[0,0],[dir*26,4],[dir*30,42]], this.seed^0x21);
+      this.limb(ctx, [[0,0],[dir*30,6],[dir*35,44]], this.seed^0x22);
+      roughStroke(ctx, [[dir*30,42],[dir*42,42]], { seed:this.seed^0x23, wobble:0.5, width:5.5 });
+      roughStroke(ctx, [[dir*35,44],[dir*47,44]], { seed:this.seed^0x24, wobble:0.5, width:5.5 });
+      this.limb(ctx, [[0,0],[-dir*4,-70]], this.seed^0x25);
+      if(arm === 'scratch' || arm === 'wave' || arm === 'point'){
+        this.gestArm(ctx, t, arm, dir, [-dir*4,-62]);
+      } else {
+        this.limb(ctx, [[-dir*4,-62],[dir*14,-36],[dir*22,-20]], this.seed^0x26); // arm on knee
+      }
+      this.limb(ctx, [[-dir*4,-62],[-dir*18,-40],[-dir*20,-18]], this.seed^0x27);
+      ctx.translate(-dir*4, -70);
+      ctx.scale(dir, 1);
+      ctx.translate(0, 74);
+      this.drawHead(ctx, t, expr, 1);
+    }
+    else if(mode === 'lie'){
+      this.limb(ctx, [[0,0],[52,6],[86,2]], this.seed^0x21);
+      this.limb(ctx, [[0,0],[50,12],[84,10]], this.seed^0x22);
+      this.limb(ctx, [[0,0],[-24,-42]], this.seed^0x25);
+      this.limb(ctx, [[-24,-40],[-8,-16],[6,-8]], this.seed^0x26);
+      this.limb(ctx, [[-24,-40],[-2,-34],[14,-24]], this.seed^0x27);
+      ctx.translate(-24, -42);
+      ctx.translate(0, 74);
+      this.drawHead(ctx, t, expr, 1);
+    }
+    ctx.restore();
+  }
+}
+</script>
+<script>
+'use strict';
+/* ============================================================
+ * Character roster — same pose contract as Dude:
+ *   draw(ctx, t, { mode:'stand'|'walk'|'sit', expr, lookDir })
+ * Local space: origin at hip anchor, feet reach y≈+72.
+ * Quadrupeds (Pet) ignore arm gestures; Monster has no arms.
+ * ============================================================ */
+
+/* cat / dog — profile quadruped; head faces +dir side */
+class Pet {
+  constructor(seed, o={}){
+    const rng = new RNG(seed);
+    this.seed = seed;
+    this.ear = o.ear ?? 'pointy';        // pointy(cat) | floppy(dog)
+    this.coat = o.coat ?? '#f4efe4';
+    this.snout = o.snout ?? false;       // dog muzzle + nose
+    this.patch = o.patch ?? false;       // spot around one eye
+    this.tailRate = o.tailRate ?? 1.8;   // dogs wag faster
+    this.blinkPeriod = rng.range(2.4, 4.2);
+    this.blinkOff = rng.range(0, 5);
+    this.swayOff = rng.range(0, Math.PI*2);
+  }
+  blinking(t){ return ((t + this.blinkOff) % this.blinkPeriod) < 0.12; }
+  limb(ctx, pts, seed, width=5.5){ roughStroke(ctx, pts, { seed, wobble:1.0, width, color:INK }); }
+
+  // head drawn facing +x; caller passes head center
+  drawHead(ctx, t, hx, hy, dir, expr){
+    const s = this.seed, blink = this.blinking(t);
+    ctx.save(); ctx.translate(hx, hy); ctx.scale(dir, 1);
+    if(this.ear === 'pointy'){
+      shape(ctx, [[-16,-16],[-11,-40],[-1,-21]], { seed:s^0x61, fill:this.coat, width:4.5 });
+      shape(ctx, [[4,-21],[14,-40],[19,-14]], { seed:s^0x62, fill:this.coat, width:4.5 });
+    } else {
+      shape(ctx, blobPts(-17, -2, 13, s^0x61, { amp:0.08, sqX:0.55, sqY:1.7 }), { seed:s^0x63, fill:this.coat, width:4.5 });
+      shape(ctx, blobPts(19, -4, 12, s^0x62, { amp:0.08, sqX:0.55, sqY:1.6 }), { seed:s^0x64, fill:this.coat, width:4.5 });
+    }
+    shape(ctx, blobPts(0, 0, 27, s^0x65, { amp:0.05, sqY:0.92 }), { seed:s^0x66, fill:this.coat, width:5.5 });
+    if(this.snout){
+      shape(ctx, blobPts(24, 6, 12, s^0x67, { amp:0.06, sqX:1.15, sqY:0.8 }), { seed:s^0x68, fill:this.coat, width:4.5 });
+      dot(ctx, 33, 2, 3.4, INK);
+    }
+    if(this.patch)
+      shape(ctx, blobPts(11, -6, 10, s^0x69, { amp:0.12 }), { seed:s^0x6a, fill:'#6b5636', width:3 });
+    const eyeY = -6;
+    for(const ex of [-9, 11]){
+      if(blink)
+        roughStroke(ctx, [[ex-6, eyeY],[ex+6, eyeY]], { seed:s+ex, wobble:0.4, width:3.5 });
+      else if(expr === 'happy')
+        roughStroke(ctx, arcPts(ex, eyeY+4, 6.5, Math.PI+0.35, Math.PI*2-0.35, 8), { seed:s+ex, wobble:0.4, width:4 });
+      else {
+        const er = expr === 'shocked' ? 8 : 6.5;
+        shape(ctx, ellipsePts(ex, eyeY, er*0.8, er, 12), { seed:(s^0x6b)+ex, fill:'#fff', width:3.5, wobble:0.6 });
+        dot(ctx, ex+2.5, eyeY+0.5, 2.4, INK);
+      }
+    }
+    if(expr === 'happy' && this.snout)
+      shape(ctx, blobPts(20, 17, 6, s^0x6c, { amp:0.1, sqY:1.4 }), { seed:s^0x6d, fill:'#e8a0a0', width:3 });
+    if(expr === 'shocked')
+      shape(ctx, ellipsePts(18, 14, 4.5, 6, 10), { seed:s^0x6c, fill:INK, width:3 });
+    else
+      roughStroke(ctx, arcPts(14, 10, 6, 0.3, Math.PI-0.5, 8), { seed:s^0x6e, wobble:0.4, width:3.5 });
+    if(!this.snout){
+      for(const wy of [-2, 4])
+        roughStroke(ctx, [[14, wy],[30, wy-3]], { seed:s+wy, wobble:0.3, width:1.8, alpha:0.7 });
+    }
+    ctx.restore();
+  }
+
+  draw(ctx, t, pose={}){
+    const mode = pose.mode ?? 'stand';
+    const expr = pose.expr ?? 'neutral';
+    const dir = pose.lookDir ?? 1;
+    const s = this.seed;
+    const ph = t*7 + this.swayOff;
+    const walking = mode === 'walk';
+    const sit = mode === 'sit';
+    const bob = walking ? Math.abs(Math.cos(ph))*3.2 : Math.sin(t*1.5 + this.swayOff)*1.4;
+    ctx.save();
+    ctx.translate(0, -bob);
+    // short legs + big body = pet proportions (total height ~146, dude is ~196)
+    const wag = Math.sin(t*this.tailRate*2 + this.swayOff) * (this.tailRate > 3 ? 12 : 6);
+    const tb = [-dir*50, sit ? -8 : -14];
+    this.limb(ctx, [tb, [tb[0]-dir*14, tb[1]-18], [tb[0]-dir*6, tb[1]-38+wag*0.4]], s^0x51, 6);
+    if(sit){
+      shape(ctx, blobPts(-dir*4, 2, 44, s^0x52, { amp:0.05, sqX:0.9, sqY:1.0 }), { seed:s^0x53, fill:this.coat, width:5.5 });
+      this.limb(ctx, [[dir*18,-8],[dir*20,30],[dir*20,72]], s^0x54, 6.5);
+      this.limb(ctx, [[dir*30,-10],[dir*32,32],[dir*32,72]], s^0x55, 6.5);
+      roughStroke(ctx, arcPts(-dir*16, 66, 14, Math.PI, Math.PI*2, 10), { seed:s^0x56, wobble:0.6, width:6 });
+      this.drawHead(ctx, t, dir*34, -50, dir, expr);
+    } else {
+      shape(ctx, blobPts(0, -6, 44, s^0x52, { amp:0.05, sqX:1.35, sqY:0.62 }), { seed:s^0x53, fill:this.coat, width:5.5 });
+      [-26, -10, 10, 26].forEach((lx, i)=>{
+        // diagonal leg pairs swing in anti-phase
+        const sw = walking ? Math.sin(ph + ((i===0||i===3) ? 0 : Math.PI))*10 : 0;
+        this.limb(ctx, [[lx,12],[lx+sw*0.4,44],[lx+sw,72]], s^0x57+i, 6.5);
+      });
+      this.drawHead(ctx, t, dir*54, -34, dir, expr);
+    }
+    ctx.restore();
+  }
+}
+
+/* nightmare blob — horns, X eyes, stitched mouth, stubby feet */
+class Monster {
+  constructor(seed){
+    const rng = new RNG(seed);
+    this.seed = seed;
+    this.fill = '#5a4a66';
+    this.blinkPeriod = rng.range(3, 5);
+    this.blinkOff = rng.range(0, 5);
+    this.swayOff = rng.range(0, Math.PI*2);
+  }
+  blinking(t){ return ((t + this.blinkOff) % this.blinkPeriod) < 0.14; }
+  draw(ctx, t, pose={}){
+    const mode = pose.mode ?? 'stand';
+    const expr = pose.expr ?? 'neutral';
+    const dir = pose.lookDir ?? 1;
+    const s = this.seed;
+    const walking = mode === 'walk';
+    const ph = t*6 + this.swayOff;
+    ctx.save();
+    if(mode === 'sit') ctx.scale(1.12, 0.82);
+    ctx.translate(0, walking ? -Math.abs(Math.cos(ph))*4 : Math.sin(t*1.4+this.swayOff)*2);
+    ctx.rotate(walking ? Math.sin(ph)*0.06 : Math.sin(t*1.2+this.swayOff)*0.02);
+    // horns
+    shape(ctx, [[-26,-96],[-18,-122],[-8,-98]], { seed:s^0x71, fill:this.fill, width:5 });
+    shape(ctx, [[8,-99],[20,-124],[28,-94]], { seed:s^0x72, fill:this.fill, width:5 });
+    // body
+    shape(ctx, blobPts(0, -52, 52, s^0x73, { amp:0.07, sqY:1.05 }), { seed:s^0x74, fill:this.fill, width:6 });
+    // stubby feet
+    const st = walking ? Math.sin(ph)*8 : 0;
+    roughStroke(ctx, arcPts(-18+st, 62, 12, Math.PI, Math.PI*2, 8), { seed:s^0x75, wobble:0.6, width:6, color:this.fill });
+    roughStroke(ctx, arcPts(18-st, 62, 12, Math.PI, Math.PI*2, 8), { seed:s^0x76, wobble:0.6, width:6, color:this.fill });
+    // X eyes; round eyes only when shocked/happy
+    const blink = this.blinking(t);
+    for(const ex of [-16, 16]){
+      if(blink){
+        roughStroke(ctx, [[ex-7,-66],[ex+7,-66]], { seed:s+ex, wobble:0.4, width:4, color:'#e8e4d8' });
+      } else if(expr === 'shocked' || expr === 'happy'){
+        shape(ctx, ellipsePts(ex, -66, 8, 9, 12), { seed:(s^0x77)+ex, fill:'#e8e4d8', width:3.5, wobble:0.7 });
+        dot(ctx, ex+dir*2, -66, 2.6, INK);
+      } else {
+        roughStroke(ctx, [[ex-6,-72],[ex+6,-60]], { seed:(s^0x78)+ex, wobble:0.5, width:4, color:'#e8e4d8' });
+        roughStroke(ctx, [[ex-6,-60],[ex+6,-72]], { seed:(s^0x79)+ex, wobble:0.5, width:4, color:'#e8e4d8' });
+      }
+    }
+    // stitched mouth
+    if(expr === 'happy')
+      roughStroke(ctx, arcPts(0, -36, 14, 0.3, Math.PI-0.3, 10), { seed:s^0x7a, wobble:0.5, width:4.5, color:'#e8e4d8' });
+    else if(expr === 'shocked')
+      shape(ctx, ellipsePts(0, -32, 7, 9, 10), { seed:s^0x7a, fill:'#141210', width:3.5 });
+    else {
+      roughStroke(ctx, [[-16,-32],[16,-32]], { seed:s^0x7a, wobble:0.5, width:4, color:'#e8e4d8' });
+      for(const mx of [-9, 0, 9])
+        roughStroke(ctx, [[mx,-37],[mx,-27]], { seed:(s^0x7b)+mx, wobble:0.3, width:3, color:'#e8e4d8' });
+    }
+    ctx.restore();
+  }
+}
+
+/* ---------- baby: big head, tiny body, single curl ---------- */
+function drawBaby(ctx, t, x, y, s, expr, seed){
+  const kick = Math.sin(t*3.1 + seed)*3;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(s, s);
+  shape(ctx, blobPts(0, -18, 26, seed^0x31, { amp:0.05, sqY:0.9 }), { seed:seed^0x32, fill:'#cfe0ee', width:5 });
+  roughStroke(ctx, [[-10,2],[-14,16+kick]], { seed:seed^0x33, wobble:0.8, width:5 });
+  roughStroke(ctx, [[10,2],[14,16-kick]], { seed:seed^0x34, wobble:0.8, width:5 });
+  // arms reach up; stretch higher on grab beats
+  const grab = Math.max(0, Math.sin(t*0.9 + 1)) * 10;
+  roughStroke(ctx, [[-22,-26],[-34,-38-grab+kick*0.5]], { seed:seed^0x35, wobble:0.8, width:5 });
+  roughStroke(ctx, [[22,-26],[34,-38-grab-kick*0.5]], { seed:seed^0x36, wobble:0.8, width:5 });
+  const hy = -66 + Math.sin(t*2+seed)*1.5;
+  shape(ctx, blobPts(0, hy, 34, seed^0x37, { amp:0.03 }), { seed:seed^0x38, fill:PAPER_W, width:6 });
+  roughStroke(ctx, arcPts(2, hy-34, 8, Math.PI*0.9, Math.PI*2.6, 10), { seed:seed^0x39, wobble:0.5, width:4 });
+  const blink = ((t + seed) % 3.7) < 0.12;
+  for(const sd of [-1,1]){
+    const ex = sd*13;
+    if(blink) roughStroke(ctx, [[ex-6, hy-4],[ex+6, hy-4]], { seed:seed+sd, wobble:0.4, width:3.5 });
+    else{
+      shape(ctx, ellipsePts(ex, hy-4, 5.5, 7, 12), { seed:seed^0x3a+sd, fill:'#fff', width:3.5, wobble:0.6 });
+      dot(ctx, ex+1, hy-3, 2.2, INK);
+    }
+  }
+  if(expr === 'laugh'){
+    shape(ctx, ellipsePts(0, hy+12, 8, 9, 12), { seed:seed^0x3b, fill:'#8a4a42', width:3.5 });
+    roughStroke(ctx, arcPts(0, hy+6, 14, 0.35, Math.PI-0.35), { seed:seed^0x3c, wobble:0.5, width:4 });
+  } else {
+    roughStroke(ctx, arcPts(0, hy+8, 9, 0.3, Math.PI-0.3), { seed:seed^0x3b, wobble:0.5, width:4 });
+  }
+  dot(ctx, -20, hy+8, 4, '#e8a0a0', 0.5); dot(ctx, 20, hy+8, 4, '#e8a0a0', 0.5);
+  ctx.restore();
+}
+
+/* ---------- props ---------- */
+function drawMoon(ctx, x, y, r, seed){
+  const ah = 1.35;
+  const d = 0.58*r;
+  const ri = r*Math.sqrt((Math.cos(ah)-0.58)**2 + Math.sin(ah)**2);
+  const ai = Math.atan2(Math.sin(ah), Math.cos(ah)-0.58);
+  // outer arc: top horn → left → bottom horn; inner arc: bottom horn →
+  // around the inner circle's LEFT side → top horn (a true crescent)
+  const pts = arcPts(0, 0, r, -ah, -(Math.PI*2 - ah), 24)
+    .concat(arcPts(d, 0, ri, ai, Math.PI*2 - ai, 20));
+  ctx.save(); ctx.translate(x, y);
+  shape(ctx, pts, { seed, fill:'#e8e4d8', width:5 });
+  ctx.restore();
+}
+
+function drawStar(ctx, x, y, r, seed, color='#e8e4d8', alpha=1){
+  const pts = [];
+  for(let i=0;i<8;i++){
+    const a = i/8*Math.PI*2 - Math.PI/2;
+    const rr = i%2===0 ? r : r*0.38;
+    pts.push([x + Math.cos(a)*rr, y + Math.sin(a)*rr]);
+  }
+  ctx.save(); ctx.globalAlpha *= alpha;
+  shape(ctx, pts, { seed, fill:color, width:3 });
+  ctx.restore();
+}
+
+function drawCrib(ctx, x, y, w, seed, h=74){
+  ctx.save(); ctx.translate(x, y);
+  const barN = Math.floor(w/22);
+  roughStroke(ctx, [[0,0],[w,0]], { seed:seed^0x51, wobble:1.2, width:7 });
+  roughStroke(ctx, [[0,h],[w,h]], { seed:seed^0x52, wobble:1.2, width:7 });
+  for(let i=0;i<=barN;i++)
+    roughStroke(ctx, [[i/barN*w, 0],[i/barN*w, h]], { seed:seed^0x53+i, wobble:0.8, width:4.5 });
+  ctx.restore();
+}
+
+function drawMobile(ctx, t, x, y, seed){
+  ctx.save(); ctx.translate(x, y);
+  ctx.rotate(Math.sin(t*0.55)*0.10);           // whole mobile slowly turns
+  roughStroke(ctx, [[0,30],[0,0],[52,-8]], { seed:seed^0x61, wobble:0.8, width:5, color:'#8a7458' });
+  const sway = Math.sin(t*1.2)*4;
+  const items = [[34, 26, 'star'], [54, 34, 'moon'], [18, 38, 'star']];
+  items.forEach(([ix, iy, kind], i)=>{
+    const dx = ix + sway*(0.5+i*0.3), dy = iy - 8 + Math.sin(t*1.4+i*2)*2.5;
+    roughStroke(ctx, [[ix, -6],[dx, dy]], { seed:seed^0x62+i, wobble:0.4, width:2.5, color:'#8a7458' });
+    if(kind === 'moon') drawMoon(ctx, dx, dy+10, 9, seed^0x66+i);
+    else drawStar(ctx, dx, dy+8, 8, seed^0x66+i, '#e8d48a');
+  });
+  ctx.restore();
+}
+
+function drawBrain(ctx, t, x, y, r, seed, glowSpot){
+  ctx.save(); ctx.translate(x, y);
+  shape(ctx, blobPts(0, 0, r, seed^0x71, { amp:0.10, sqY:0.82 }), { seed:seed^0x72, fill:'#c98a8a', width:6 });
+  for(let i=0;i<5;i++){
+    const y0 = -r*0.45 + i*r*0.22;
+    const pts = [];
+    for(let k=0;k<=8;k++) pts.push([-r*0.62 + k*r*0.155, y0 + Math.sin(k*1.6+i*2)*r*0.07]);
+    roughStroke(ctx, pts, { seed:seed^0x74+i, wobble:0.8, width:3, alpha:0.55 });
+  }
+  if(glowSpot){
+    const pulse = 0.75 + 0.25*Math.sin(t*3);
+    ctx.save();
+    ctx.globalAlpha *= 0.85*pulse;
+    const g = ctx.createRadialGradient(r*0.1, r*0.18, 2, r*0.1, r*0.18, r*0.42);
+    g.addColorStop(0, '#ffd83d'); g.addColorStop(1, 'rgba(255,216,61,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(r*0.1, r*0.18, r*0.42, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+    shape(ctx, blobPts(r*0.1, r*0.18, r*0.16, seed^0x75, { amp:0.12, sqX:1.5 }), { seed:seed^0x76, fill:'#ffd83d', width:3.5 });
+  }
+  ctx.restore();
+}
+
+function drawNeuron(ctx, t, x, y, r, seed, fire){
+  const rng = new RNG(seed);
+  ctx.save(); ctx.translate(x, y);
+  const nD = rng.int(5, 7);
+  for(let i=0;i<nD;i++){
+    const a = i/nD*Math.PI*2 + rng.range(-0.2, 0.2);
+    const len = r*(1.4 + rng.next()*0.9);
+    const mx = Math.cos(a)*len*0.5 + rng.range(-8, 8), my = Math.sin(a)*len*0.5 + rng.range(-8, 8);
+    roughStroke(ctx, [[Math.cos(a)*r*0.6, Math.sin(a)*r*0.6],[mx, my],[Math.cos(a)*len, Math.sin(a)*len]],
+      { seed:seed+i, wobble:1.4, width:3.5, alpha:0.85, color:'#7f96b8' });
+  }
+  shape(ctx, blobPts(0, 0, r*0.75, seed^0x81, { amp:0.08 }), { seed:seed^0x82, fill: fire ? '#ffd83d' : '#7a96b8', width:5 });
+  dot(ctx, 0, 0, r*0.2, INK, 0.85);
+  ctx.restore();
+}
+
+function drawPhoto(ctx, x, y, w, h, seed, o={}){
+  ctx.save(); ctx.translate(x, y); ctx.rotate(o.rot ?? 0);
+  shape(ctx, [[-w/2,-h/2],[w/2,-h/2],[w/2,h/2],[-w/2,h/2]], { seed, fill:'#d8d2c4', width:5 });
+  flatFill(ctx, [[-w/2+7,-h/2+7],[w/2-7,-h/2+7],[w/2-7,h/2-7],[-w/2+7,h/2-7]], '#3a3226', { seed:seed+1 });
+  const fx = 0, fy = 2, fr = Math.min(w,h)*0.22;
+  shape(ctx, ellipsePts(fx, fy, fr, fr, 16), { seed:seed+2, fill:PAPER_W, width:3.5, wobble:0.6 });
+  dot(ctx, fx-5, fy-2, 1.8, INK); dot(ctx, fx+5, fy-2, 1.8, INK);
+  roughStroke(ctx, arcPts(fx, fy+3, 4.5, 0.3, Math.PI-0.3), { seed:seed+3, wobble:0.3, width:2.5 });
+  ctx.restore();
+}
+/* ---------- generic props (reusable scene building blocks) ---------- */
+function drawTree(ctx, x, y, s, seed){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  roughStroke(ctx, [[0,0],[-4,-40],[-2,-78]], { seed:seed^0x1, wobble:1.2, width:7, color:'#4a3826' });
+  roughStroke(ctx, [[-2,-46],[-20,-66]], { seed:seed^0x2, wobble:1, width:5, color:'#4a3826' });
+  shape(ctx, blobPts(-14, -88, 30, seed^0x3, { amp:0.12 }), { seed:seed^0x4, fill:'#5a6b3a', width:5 });
+  shape(ctx, blobPts(18, -80, 26, seed^0x5, { amp:0.12 }), { seed:seed^0x6, fill:'#6b7a44', width:5 });
+  shape(ctx, blobPts(2, -106, 24, seed^0x7, { amp:0.12 }), { seed:seed^0x8, fill:'#4c5c34', width:5 });
+  ctx.restore();
+}
+function drawHouse(ctx, x, y, w, seed){   // y = ground
+  ctx.save(); ctx.translate(x, y);
+  const h = w*0.72;
+  shape(ctx, [[0,-h],[w,-h],[w,0],[0,0]], { seed, fill:'#6b5636', width:6 });
+  shape(ctx, [[-w*0.12,-h],[w*0.5,-h-w*0.42],[w*1.12,-h]], { seed:seed+1, fill:'#4a3826', width:6 });
+  shape(ctx, [[w*0.14,-h*0.5],[w*0.38,-h*0.5],[w*0.38,0],[w*0.14,0]], { seed:seed+2, fill:'#3a2c1e', width:5 });
+  shape(ctx, [[w*0.58,-h*0.62],[w*0.86,-h*0.62],[w*0.86,-h*0.34],[w*0.58,-h*0.34]], { seed:seed+3, fill:'#e8d48a', width:5 });
+  roughStroke(ctx, [[w*0.72,-h*0.62],[w*0.72,-h*0.34]], { seed:seed+4, wobble:0.5, width:3 });
+  roughStroke(ctx, [[w*0.58,-h*0.48],[w*0.86,-h*0.48]], { seed:seed+5, wobble:0.5, width:3 });
+  ctx.restore();
+}
+function drawCar(ctx, x, y, s, seed){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  shape(ctx, [[-70,-10],[-62,-26],[30,-30],[58,-12],[64,0],[-66,0]], { seed, fill:'#7a5a4a', width:6 });
+  shape(ctx, [[-40,-26],[-30,-44],[12,-44],[24,-28]], { seed:seed+1, fill:'#8fa8c0', width:5 });
+  for(const wx of [-38, 34]){
+    shape(ctx, ellipsePts(wx, 2, 13, 13, 14), { seed:seed+2+wx, fill:'#241d16', width:5 });
+    dot(ctx, wx, 2, 4, '#8a7458');
+  }
+  ctx.restore();
+}
+function drawSun(ctx, t, x, y, r, seed){
+  const pulse = 1 + Math.sin(t*1.1)*0.03;
+  shape(ctx, ellipsePts(x, y, r*pulse, r*pulse, 22), { seed, fill:'#e8c85a', width:5 });
+  for(let i=0;i<8;i++){
+    const a = i/8*Math.PI*2 + t*0.05;
+    roughStroke(ctx, [[x+Math.cos(a)*r*1.25, y+Math.sin(a)*r*1.25],[x+Math.cos(a)*r*1.55, y+Math.sin(a)*r*1.55]],
+      { seed:seed+i, wobble:0.5, width:4, color:'#e8c85a' });
+  }
+}
+function drawCloud(ctx, x, y, s, seed){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  shape(ctx, blobPts(0, 0, 34, seed, { amp:0.10, sqX:1.5, sqY:0.6 }), { seed:seed+1, fill:'#d8d2c4', width:5, alpha:0.85 });
+  ctx.restore();
+}
+function drawPlanet(ctx, x, y, r, seed){
+  ctx.save(); ctx.translate(x, y); ctx.rotate(-0.35);
+  roughStroke(ctx, ellipsePts(0, 0, r*1.7, r*0.5, 26), { seed:seed+1, wobble:1, width:5, color:'#d8c37f', close:true });
+  ctx.restore();
+  shape(ctx, blobPts(x, y, r, seed, { amp:0.04 }), { seed:seed+2, fill:'#8a6a8a', width:6 });
+}
+function drawTable(ctx, x, floorY, w, seed){
+  ctx.save(); ctx.translate(x, floorY);
+  shape(ctx, [[-w/2,-78],[w/2,-78],[w/2,-70],[-w/2,-70]], { seed, fill:'#4a3826', width:6 });
+  roughStroke(ctx, [[-w/2+10, -70],[-w/2+10, 0]], { seed:seed+1, wobble:0.6, width:6 });
+  roughStroke(ctx, [[w/2-10, -70],[w/2-10, 0]], { seed:seed+2, wobble:0.6, width:6 });
+  ctx.restore();
+}
+function drawFlask(ctx, t, x, y, s, seed){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  shape(ctx, [[-8,-36],[8,-36],[8,-14],[26,0],[-26,0],[-8,-14]], { seed, fill:'#54687c', width:5, alpha:0.7 });
+  flatFill(ctx, [[-18,-14],[18,-14],[26,0],[-26,0]], '#7fd4d8', { seed:seed+1, alpha:0.5 });
+  // bubbles rising in the liquid
+  const rng = new RNG(seed+2);
+  for(let i=0;i<3;i++){
+    const v = (t*0.5 + rng.next()) % 1;
+    dot(ctx, rng.range(-10, 10), -13*v - 1, 2 + v*1.5, '#d8f0f0', 0.7*(1-v));
+  }
+  ctx.restore();
+}
+function drawComputer(ctx, t, x, y, s, seed){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  shape(ctx, [[-26,-44],[26,-44],[26,-10],[-26,-10]], { seed, fill:'#2c2824', width:5 });
+  const flick = 0.75 + 0.25*Math.sin(t*7+seed);
+  dot(ctx, 0, -27, 12, '#7fd4d8', 0.25*flick);
+  roughStroke(ctx, [[-16,-27],[16,-27]], { seed:seed+1, wobble:0.5, width:3, color:'#7fd4d8', alpha:0.8*flick });
+  roughStroke(ctx, [[-10,-21],[10,-21]], { seed:seed+4, wobble:0.5, width:2.5, color:'#7fd4d8', alpha:0.6*flick });
+  roughStroke(ctx, [[0,-10],[0,-2]], { seed:seed+2, wobble:0.3, width:4 });
+  roughStroke(ctx, [[-14,0],[14,0]], { seed:seed+3, wobble:0.4, width:5 });
+  ctx.restore();
+}
+function drawFlower(ctx, t, x, y, s, seed){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.rotate(Math.sin(t*1.4 + seed)*0.08);
+  roughStroke(ctx, [[0,0],[3,-20],[0,-38]], { seed, wobble:0.8, width:3.5, color:'#5a6b3a' });
+  for(let i=0;i<6;i++){
+    const a = i/6*Math.PI*2;
+    shape(ctx, ellipsePts(Math.cos(a)*9, -38+Math.sin(a)*9, 7, 7, 10), { seed:seed+10+i, fill:'#d87f7f', width:2.5 });
+  }
+  dot(ctx, 0, -38, 5, '#e8c85a');
+  ctx.restore();
+}
+</script>
+<script>
+'use strict';
+/* ============================================================
+ * Scenes — every shot has its own little story beats driven by
+ * u = t/dur, plus a keyframed camera. Cross-dissolve cuts.
+ * ============================================================ */
+
+function floorLine(ctx, W, H, y, seed){
+  roughStroke(ctx, [[-10, y],[W+10, y+4]], { seed, wobble:2.2, width:5, alpha:0.8 });
+}
+
+/* per-visual camera keyframes: [u, cx(W frac), cy(H frac), zoom] */
+const CAMS = {
+  bedroom: [[0, .60, .52, 1.00],[.28, .56, .52, 1.02],[.55, .54, .50, 1.06],[1, .525, .56, 1.22]],
+  crib:    [[0, .50, .55, 1.00],[1, .50, .58, 1.12]],
+  photos:  [[0, .50, .50, 1.02],[1, .50, .48, 1.08]],
+  brain:   [[0, .50, .50, 1.00],[.5, .47, .46, 1.06],[1, .56, .40, 1.13]],
+  neurons: [[0, .62, .42, 1.05],[1, .34, .58, 1.12]],
+  mirror:  [[0, .50, .62, 1.00],[1, .50, .56, 1.14]],
+  endcard: [[0, .50, .52, 1.00],[1, .50, .52, 1.05]],
+  roster:  [[0, .50, .52, 1.00],[1, .50, .50, 1.06]],
+  park:    [[0, .55, .52, 1.00],[.35, .50, .54, 1.03],[1, .46, .55, 1.12]],
+  street:  [[0, .50, .52, 1.00],[1, .55, .50, 1.08]],
+  space:   [[0, .50, .50, 1.00],[1, .45, .48, 1.10]],
+  lab:     [[0, .50, .52, 1.00],[1, .42, .50, 1.12]],
+};
+/* portrait overrides (9:16 shorts) — gentler zooms, focus pulled toward the action */
+const CAMS_P = {
+  bedroom: [[0, .58, .52, 1.00],[.28, .55, .52, 1.02],[.55, .54, .50, 1.05],[1, .50, .54, 1.12]],
+  crib:    [[0, .50, .60, 1.05],[1, .50, .62, 1.18]],
+  brain:   [[0, .50, .50, 1.05],[.5, .46, .46, 1.14],[1, .52, .42, 1.22]],
+  mirror:  [[0, .50, .66, 1.05],[1, .50, .60, 1.20]],
+  endcard: [[0, .42, .60, 1.12],[1, .42, .58, 1.22]],
+};
+function camAt(sc, tLocal){
+  const cam = sc.cam || (typeof PORTRAIT !== 'undefined' && PORTRAIT && CAMS_P[sc.visual]) || CAMS[sc.visual];
+  const u = clamp01(tLocal / sc.dur);
+  if(!cam || !cam.length) return [0.5, 0.52, 1];
+  if(u <= cam[0][0]) return cam[0].slice(1);
+  for(let k=0;k<cam.length-1;k++){
+    const a = cam[k], b = cam[k+1];
+    if(u <= b[0]){
+      const s = smooth((u - a[0]) / Math.max(1e-6, b[0]-a[0]));
+      return [ a[1]+(b[1]-a[1])*s, a[2]+(b[2]-a[2])*s, a[3]+(b[3]-a[3])*s ];
+    }
+  }
+  return cam[cam.length-1].slice(1);
+}
+
+const VISUALS = {
+  /* 1 — night. Dude walks in, picks up a baby photo from the nightstand, stares at it. */
+  bedroom(ctx, t, W, H, sc){
+    const u = t/sc.dur;
+    const fy = H*0.78;
+    floorLine(ctx, W, H, fy, 101);
+    // window + night sky (portrait: keep it window-shaped, not a door)
+    const wx = W*0.60, wy = H*0.12, ww = W*0.28, wh = PORTRAIT ? W*0.40 : H*0.34;
+    shape(ctx, [[wx,wy],[wx+ww,wy],[wx+ww,wy+wh],[wx,wy+wh]], { seed:102, fill:'#141c2e', width:7 });
+    drawMoon(ctx, wx+ww*0.68, wy+wh*0.30, 26, 103);
+    drawStar(ctx, wx+ww*0.25, wy+wh*0.18, 10, 104, '#e8e4d8', 0.55+0.4*Math.sin(t*2.1));
+    drawStar(ctx, wx+ww*0.5, wy+wh*0.72, 8, 105, '#e8e4d8', 0.55+0.4*Math.sin(t*1.7+2));
+    // bed: tall headboard, long mattress, legs down to the floor
+    const bx = W*0.28, by = H*0.60;
+    shape(ctx, [[bx-162, by-128],[bx-142, by-128],[bx-142, by+30],[bx-162, by+30]], { seed:106, fill:'#4a3826', width:6 });
+    roughStroke(ctx, [[bx-136, by+34],[bx-136, fy]], { seed:109, wobble:0.8, width:7 });
+    roughStroke(ctx, [[bx+252, by+34],[bx+252, fy]], { seed:110, wobble:0.8, width:7 });
+    shape(ctx, [[bx-140, by-14],[bx+250, by-14],[bx+268, by+34],[bx-140, by+34]], { seed:107, fill:'#6b5636', width:6 });
+    shape(ctx, blobPts(bx-84, by-30, 40, 111, { amp:0.08, sqX:1.35, sqY:0.62 }), { seed:112, fill:'#d8d2c4', width:5 });
+    flatFill(ctx, [[bx+10, by-14],[bx+250, by-14],[bx+266, by+34],[bx+18, by+34]], '#3a4a66', { seed:108 });
+    // nightstand next to the bed
+    const tx = W*0.50, tt = fy - 66;
+    shape(ctx, [[tx-34, tt],[tx+34, tt],[tx+34, tt+10],[tx-34, tt+10]], { seed:113, fill:'#4a3826', width:5 });
+    roughStroke(ctx, [[tx-26, tt+10],[tx-26, fy]], { seed:114, wobble:0.6, width:5 });
+    roughStroke(ctx, [[tx+26, tt+10],[tx+26, fy]], { seed:115, wobble:0.6, width:5 });
+    // beats: walk in → reach → pick up the photo → stare, scratch head
+    const walkU = 0.28, reachU = 0.40, holdU = 0.52;
+    const dudeX = W*0.545, dudeY = fy - 76;
+    const handX = dudeX - 30, handY = dudeY - 50;
+    const pk = smooth((u - reachU)/(holdU - reachU));
+    const phX = tx + (handX - tx)*pk, phY = (tt-46) + (handY - (tt-46))*pk;
+    if(u < walkU){
+      const k = easeInOut(u/walkU);
+      const x = W*0.92 + (dudeX - W*0.92)*k;
+      ctx.save(); ctx.translate(x, dudeY); ctx.scale(1.05, 1.05);
+      charFor(sc).draw(ctx, t, { mode:'walk', lookDir:-1 });
+      ctx.restore();
+    } else {
+      const arm  = u < reachU ? 'point' : 'hold';
+      const arm2 = u > 0.72 ? 'scratch' : undefined;
+      const expr = u > 0.58 ? 'confused' : 'neutral';
+      // tiny settle-squash right when he stops walking
+      const sq = Math.sin(smooth((u-walkU)/0.10)*Math.PI);
+      ctx.save();
+      ctx.translate(dudeX, dudeY); ctx.scale(1.05*(1+0.04*sq), 1.05*(1-0.05*sq));
+      charFor(sc).draw(ctx, t, { mode:'stand', lookDir:-1, arm, arm2, expr });
+      ctx.restore();
+    }
+    // the photo: on the nightstand → in his hand
+    drawPhoto(ctx, phX, phY, 64, 76, 320, { rot: -0.08 + pk*0.10 });
+  },
+
+  /* 2 — warm flashback: baby giggling under a turning mobile, dust in the light */
+  crib(ctx, t, W, H, sc){
+    const fl = H*0.80;
+    floorLine(ctx, W, H, fl, 201);
+    // crib: rails + legs + mattress, floor-anchored (portrait-safe)
+    const cx0 = W*0.34, cw = W*0.32, ch = 118, cy0 = fl - 10 - ch;
+    const pulse = 0.20 + 0.05*Math.sin(t*1.3);
+    const g = ctx.createRadialGradient(W*0.5, cy0+ch*0.3, 40, W*0.5, cy0+ch*0.3, Math.max(W,H)*0.36);
+    g.addColorStop(0, `rgba(240,170,80,${pulse})`); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+    // dust motes drifting in the lamp light
+    const rngD = new RNG(905);
+    for(let i=0;i<7;i++){
+      const bx = rngD.range(W*0.32, W*0.68), by = rngD.range(cy0-160, cy0+40);
+      const ph = rngD.range(0, 9);
+      dot(ctx, bx + Math.sin(t*0.5+ph)*16, by + Math.cos(t*0.4+ph)*10,
+          1.6, '#e8d48a', 0.18 + 0.14*Math.sin(t*1.6+ph));
+    }
+    roughStroke(ctx, [[cx0+6, cy0+ch],[cx0+6, fl]], { seed:205, wobble:0.7, width:6 });
+    roughStroke(ctx, [[cx0+cw-6, cy0+ch],[cx0+cw-6, fl]], { seed:206, wobble:0.7, width:6 });
+    flatFill(ctx, [[cx0+8, cy0+ch-30],[cx0+cw-8, cy0+ch-30],[cx0+cw-8, cy0+ch-4],[cx0+8, cy0+ch-4]], '#8a7458', { seed:207 });
+    drawMobile(ctx, t, W*0.40, cy0 - Math.min(W,H)*0.30, 202);
+    // giggle bounce
+    const giggle = Math.max(0, Math.sin(t*2.4));
+    ctx.save(); ctx.translate(0, -giggle*7);
+    drawBaby(ctx, t, W*0.5, cy0+ch-52, 1.15, 'laugh', 204);
+    ctx.restore();
+    drawCrib(ctx, cx0, cy0, cw, 203, ch);   // front rails over the baby
+    // soft warm "memory frame" border — this is the photo come alive
+    roughStroke(ctx, [[26,26],[W-26,26],[W-26,H-26],[26,H-26]], { seed:290, wobble:2.5, width:9, color:'#e8d48a', alpha:0.20, close:true });
+  },
+
+  /* 3 — photos of babyhood appear, then crumble into particles that blow away */
+  photos(ctx, t, W, H, sc){
+    const u = t/sc.dur;
+    const defs = [[0.27, -0.06, -12, 1.3],[0.52, 0.05, 18, 0.9],[0.75, -0.04, -6, 1.0]];
+    if(!sc._parts){
+      sc._parts = defs.map((_, i)=>{
+        const rp = new RNG(340+i*17), arr = [];
+        for(let k=0;k<26;k++) arr.push({
+          dx: rp.range(-68,68), dy: rp.range(-80,80),
+          vx: rp.range(30,90), vy: rp.range(-75,-18),
+          r: rp.range(1.4,3.2), a: rp.range(0.5,1)
+        });
+        return arr;
+      });
+    }
+    defs.forEach(([fx, rot, oy, fs], i)=>{
+      const appear = easeOutBack((u - 0.04 - i*0.09)/0.09);
+      const ds = 0.56 + i*0.08;
+      const v = clamp01((u - ds)/0.24);
+      if(appear <= 0) return;
+      const px = W*fx, py = H*0.47 + oy;
+      const pw = 150*fs, ph = 170*fs;
+      if(v < 1){
+        const floatR = rot + Math.sin(t*0.8+i*2)*0.012;
+        ctx.save();
+        ctx.globalAlpha *= Math.min(1, appear) * (1-v);
+        ctx.translate(px,py); ctx.scale(Math.max(0.01, appear), Math.max(0.01, appear)); ctx.translate(-px,-py);
+        drawPhoto(ctx, px, py, pw, ph, 300+i, { rot: floatR });
+        ctx.restore();
+      }
+      if(v > 0){
+        for(const p of sc._parts[i]){
+          const a = (1-v)*(1-v)*0.85*p.a;
+          if(a <= 0.02) continue;
+          dot(ctx, px + p.dx + p.vx*v*2.6, py + p.dy + p.vy*v*2.6 - 26*v*v, p.r, '#d8d2c4', a);
+        }
+      }
+    });
+  },
+
+  /* 4 — the brain's save button: a plug that never reached the socket */
+  brain(ctx, t, W, H, sc){
+    floorLine(ctx, W, H, H*0.82, 400);
+    const g = ctx.createRadialGradient(W*0.42, H*0.46, 30, W*0.42, H*0.46, 380);
+    g.addColorStop(0, 'rgba(200,120,120,0.14)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+    // lab pedestal under the brain
+    flatFill(ctx, [[W*0.42-44, H*0.575],[W*0.42+44, H*0.575],[W*0.42+36, H*0.82],[W*0.42-36, H*0.82]], '#3a3226', { seed:430 });
+    roughStroke(ctx, [[W*0.42-54, H*0.575],[W*0.42+54, H*0.575]], { seed:431, wobble:0.8, width:7 });
+    drawBrain(ctx, t, W*0.42, H*0.46, 125, 401, true);
+    // socket on the brain's lower-right edge
+    const sx = W*0.42+100, sy = H*0.46+58;
+    shape(ctx, [[sx-16,sy-12],[sx+16,sy-12],[sx+16,sy+12],[sx-16,sy+12]], { seed:410, fill:'#3a3226', width:4.5 });
+    dot(ctx, sx-6, sy, 2.5, INK); dot(ctx, sx+6, sy, 2.5, INK);
+    // cable dangling from above, swinging — prongs never reach the socket
+    const tipX = sx - 52 + Math.sin(t*0.9)*16, tipY = H*0.30;
+    roughStroke(ctx, [[tipX-70,-8],[tipX-38, tipY*0.42],[tipX, tipY]], { seed:412, wobble:1.6, width:5, color:'#8a7458' });
+    ctx.save(); ctx.translate(tipX, tipY); ctx.rotate(0.5 + Math.sin(t*0.9)*0.10);
+    shape(ctx, [[-10,-8],[10,-8],[10,8],[-10,8]], { seed:411, fill:'#8a7458', width:4 });
+    roughStroke(ctx, [[10,-4],[21,-4]], { seed:413, wobble:0.4, width:3.5 });
+    roughStroke(ctx, [[10,4],[21,4]], { seed:414, wobble:0.4, width:3.5 });
+    ctx.restore();
+    // spark snaps at the prongs every so often
+    const cyc = t % 1.7;
+    const sparkOn = cyc < 0.18;
+    const sp = cyc/0.18;
+    if(sparkOn){
+      const gx = tipX + 24*Math.cos(0.5), gy = tipY + 24*Math.sin(0.5);
+      dot(ctx, gx, gy, 5+3*(1-sp), '#ffd83d', 0.9*(1-sp));
+      const rs = new RNG(420);
+      for(let k=0;k<3;k++){
+        const a = rs.range(-0.9, 0.9) + 0.5;
+        const L = 16 + 22*(1-sp);
+        roughStroke(ctx, [[gx, gy],[gx + Math.cos(a)*L*0.5 + rs.range(-5,5), gy + Math.sin(a)*L*0.5],[gx + Math.cos(a)*L, gy + Math.sin(a)*L]],
+          { seed:421+k, wobble:1.2, width:2.5, color:'#ffd83d', alpha: 0.9*(1-sp) });
+      }
+    }
+    // dude watches, flinches back when it sparks
+    const jump = sparkOn ? -40*sp*(1-sp)*4*0.25 : 0;
+    const bs = PORTRAIT ? 1.15 : 0.95;
+    ctx.save(); ctx.translate(W*0.80, H*0.82 - 72*bs + jump); ctx.scale(bs, bs);
+    charFor(sc).draw(ctx, t, { mode:'stand', expr: sparkOn ? 'shocked' : 'neutral', lookDir:-1, point:true });
+    ctx.restore();
+  },
+
+  /* 5 — a pulse runs the network; a growing dendrite swallows an old memory */
+  neurons(ctx, t, W, H, sc){
+    const u = t/sc.dur;
+    const spots = [ [0.2,0.3],[0.38,0.6],[0.55,0.28],[0.72,0.55],[0.86,0.3],[0.3,0.75],[0.65,0.78] ];
+    // traveling pulse along a chain through the first five neurons
+    const chain = spots.slice(0,5).map(([fx,fy])=>[W*fx, H*fy]);
+    let total = 0; const segs = [];
+    for(let i=0;i<chain.length-1;i++){
+      const L = Math.hypot(chain[i+1][0]-chain[i][0], chain[i+1][1]-chain[i][1]);
+      segs.push(L); total += L;
+    }
+    const sPos = ((t*0.22) % 1) * total;
+    let acc = 0, pulseAt = chain[0], nearIdx = -1;
+    for(let i=0;i<segs.length;i++){
+      if(sPos <= acc + segs[i]){
+        const k = (sPos-acc)/segs[i];
+        pulseAt = [chain[i][0]+(chain[i+1][0]-chain[i][0])*k, chain[i][1]+(chain[i+1][1]-chain[i][1])*k];
+        nearIdx = k > 0.72 ? i+1 : (k < 0.28 ? i : -1);
+        break;
+      }
+      acc += segs[i];
+    }
+    spots.forEach(([fx, fy], i)=> drawNeuron(ctx, t, W*fx, H*fy, 26, 500+i*7, i === nearIdx));
+    dot(ctx, pulseAt[0], pulseAt[1], 6, '#ffd83d', 0.9);
+    dot(ctx, pulseAt[0], pulseAt[1], 12, '#ffd83d', 0.25);
+    // the old memory: a tiny pale star
+    const mx = W*0.30, my = H*0.62;
+    const growU = smooth((u-0.15)/0.45);
+    const fadeU = clamp01((u-0.68)/0.18);
+    // dendrite growing from neuron (0.38,0.60) toward the memory
+    const nx0 = W*0.38, ny0 = H*0.60;
+    const gx = nx0 + (mx-nx0)*growU, gy = ny0 + (my-ny0)*growU;
+    const midx = nx0 + (mx-nx0)*growU*0.5 + Math.sin(growU*6)*8;
+    const midy = ny0 + (my-ny0)*growU*0.5 - 14*Math.sin(growU*Math.PI);
+    if(growU > 0.02)
+      roughStroke(ctx, [[nx0, ny0],[midx, midy],[gx, gy]], { seed:530, wobble:1.4, width:5, color:'#a8c0e0' });
+    // spark where the dendrite tip reaches
+    if(growU > 0.05 && growU < 1) dot(ctx, gx, gy, 4, '#cfe0ee', 0.7);
+    if(fadeU < 1){
+      const a = (1-fadeU) * (0.75 + 0.25*Math.sin(t*2.6));
+      dot(ctx, mx, my, 16, '#cfe0ee', a*0.35);
+      drawStar(ctx, mx, my, 13, 540, '#cfe0ee', a);
+    }
+    if(fadeU > 0 && fadeU < 1){
+      const rp = new RNG(545);
+      for(let k=0;k<10;k++){
+        const a = rp.range(0, Math.PI*2), sp = rp.range(14, 42);
+        dot(ctx, mx + Math.cos(a)*sp*fadeU, my + Math.sin(a)*sp*fadeU - 10*fadeU,
+            1.8, '#cfe0ee', (1-fadeU)*0.7);
+      }
+    }
+  },
+
+  /* 6 — the baby grows up: morph crossfade into the adult, who waves goodbye */
+  mirror(ctx, t, W, H, sc){
+    const u = t/sc.dur;
+    floorLine(ctx, W, H, H*0.82, 601);
+    const g = ctx.createRadialGradient(W*0.5, H*0.5, 30, W*0.5, H*0.5, 400);
+    g.addColorStop(0, 'rgba(230,220,190,0.10)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+    const cxp = W*0.5, floorY = H*0.82;
+    const CS = PORTRAIT ? 1.4 : 1;         // characters read bigger on tall frames
+    const gk = easeInOut((u-0.24)/0.24);
+    // baby scales up and dissolves fast (no lingering double image)
+    if(gk < 1){
+      ctx.save(); ctx.globalAlpha *= Math.pow(1-gk, 1.7);
+      const bs = (1.0 + gk*2.0)*CS;
+      ctx.translate(cxp, floorY); ctx.scale(bs, bs); ctx.translate(-cxp, -floorY);
+      drawBaby(ctx, t, cxp, floorY - 20, 1.0, gk > 0.5 ? 'smile' : 'laugh', 602);
+      ctx.restore();
+    }
+    // flash ring at the swap point
+    if(gk > 0.35 && gk < 0.8){
+      const rk = (gk-0.35)/0.45;
+      ctx.save();
+      ctx.globalAlpha *= (1-rk)*0.6;
+      ctx.lineWidth = 5*(1-rk)+1;
+      ctx.strokeStyle = '#f4efe4';
+      ctx.beginPath(); ctx.arc(cxp, floorY-90*CS, (30+rk*220)*CS, 0, Math.PI*2); ctx.stroke();
+      ctx.restore();
+    }
+    // adult fades in, anchored at the feet
+    if(gk > 0){
+      const ds = (0.55 + gk*0.5)*CS;
+      const hipY = floorY - 72*ds;
+      ctx.save(); ctx.globalAlpha *= Math.pow(gk, 0.8);
+      ctx.translate(cxp, hipY + (1-gk)*30); ctx.scale(ds, ds);
+      charFor(sc).draw(ctx, t, { mode:'stand', expr: gk > 0.85 ? 'happy' : 'neutral', lookDir:1,
+                          arm: (u > 0.72 && u < 0.97) ? 'wave' : 'down' });
+      ctx.restore();
+    }
+    // faint ghost of the old you lingers, then is gone
+    const ghostU = clamp01((u-0.6)/0.35);
+    if(ghostU > 0 && ghostU < 1){
+      ctx.save(); ctx.globalAlpha *= 0.16*(1-ghostU);
+      drawBaby(ctx, t, cxp, floorY - 60*CS, 0.7*CS, 'smile', 603);
+      ctx.restore();
+    }
+  },
+
+  /* 7 — quiet hill under the moon, fireflies; the question hangs */
+  endcard(ctx, t, W, H, sc){
+    // hill silhouette + a rock to sit on
+    flatFill(ctx, blobPts(W*0.30, H*1.35, W*0.80, 705, { amp:0.02, sqY:0.38, n:40 }), '#1d1712', { seed:706 });
+    flatFill(ctx, blobPts(W*0.34, H*0.80, 72, 707, { amp:0.06, sqY:0.55 }), '#2e251c', { seed:708 });
+    drawMoon(ctx, W*0.74, H*0.32, 42, 704);
+    const stars = [[0.16,0.24,6],[0.30,0.14,4.5],[0.55,0.18,5],[0.88,0.55,4],[0.64,0.60,3.5]];
+    stars.forEach(([fx, fy, r], i)=>
+      drawStar(ctx, W*fx, H*fy, r, 710+i, '#e8e4d8', 0.4+0.35*Math.sin(t*1.6+i*1.9)));
+    // dude sitting on the rock, watching the moon
+    ctx.save(); ctx.translate(W*0.34, H*0.735);
+    charFor(sc).draw(ctx, t, { mode:'sit', expr:'neutral', lookDir:1 });
+    ctx.restore();
+    // fireflies
+    for(let i=0;i<6;i++){
+      const n1 = makeNoise1D(800+i*13), n2 = makeNoise1D(900+i*17);
+      const fx = W*(0.14 + 0.66*((n1(t*0.07)+1)/2));
+      const fy = H*(0.30 + 0.45*((n2(t*0.09)+1)/2));
+      const a = 0.15 + 0.55*Math.max(0, Math.sin(t*1.4+i*1.7));
+      dot(ctx, fx, fy, 2.2, '#e8d48a', a);
+    }
+  },
+
+  /* roster — the full character lineup idling (showcase/test shot) */
+  roster(ctx, t, W, H, sc){
+    if(PORTRAIT){
+      // 2×3 grid, each on its own little ground tick
+      const spots = [[0.30,0.30],[0.70,0.30],[0.30,0.52],[0.70,0.52],[0.30,0.74],[0.70,0.74]];
+      const names = ['dude','cat','dog','monster','dude','cat'];
+      names.forEach((name, i)=>{
+        const [fx, fy] = spots[i];
+        roughStroke(ctx, [[W*fx-60, H*fy+4],[W*fx+60, H*fy]], { seed:810+i, wobble:1.2, width:4, alpha:0.6 });
+        ctx.save(); ctx.translate(W*fx, H*fy - 74);
+        CHARACTERS[name].draw(ctx, t, { mode:'stand', expr:'neutral', lookDir: i%2 ? -1 : 1 });
+        ctx.restore();
+      });
+      return;
+    }
+    floorLine(ctx, W, H, H*0.70, 801);
+    const names = ['dude','cat','dog','monster'];
+    names.forEach((name, i)=>{
+      ctx.save(); ctx.translate(W*(0.16 + i*0.22), H*0.70 - 74);
+      CHARACTERS[name].draw(ctx, t, { mode:'stand', expr:'neutral', lookDir: i%2 ? -1 : 1 });
+      ctx.restore();
+    });
+    drawBaby(ctx, t, W*0.93, H*0.70 - 22, 0.8, 'laugh', 802);
+  },
+
+  /* park — dude walks in, sits on the bench under a tree */
+  park(ctx, t, W, H, sc){
+    const u = t/sc.dur;
+    const fl = H*0.80;
+    floorLine(ctx, W, H, fl, 900);
+    drawSun(ctx, t, W*0.78, H*0.14, 34, 901);
+    drawCloud(ctx, W*((0.04 + t*0.012) % 1.15), H*0.15, 1.0, 902);
+    drawCloud(ctx, W*((0.55 + t*0.008) % 1.15), H*0.24, 0.7, 903);
+    drawTree(ctx, W*0.14, fl, 1.1, 904);
+    drawFlower(ctx, t, W*0.88, fl, 1.2, 905);
+    // bench
+    const bx = W*0.52;
+    shape(ctx, [[bx-90, fl-58],[bx+90, fl-58],[bx+90, fl-50],[bx-90, fl-50]], { seed:906, fill:'#4a3826', width:5 });
+    roughStroke(ctx, [[bx-90, fl-92],[bx+90, fl-92]], { seed:907, wobble:0.8, width:6 });
+    roughStroke(ctx, [[bx-84, fl-92],[bx-84, fl-58]], { seed:908, wobble:0.5, width:4.5 });
+    roughStroke(ctx, [[bx+84, fl-92],[bx+84, fl-58]], { seed:909, wobble:0.5, width:4.5 });
+    roughStroke(ctx, [[bx-70, fl-50],[bx-70, fl]], { seed:910, wobble:0.6, width:5 });
+    roughStroke(ctx, [[bx+70, fl-50],[bx+70, fl]], { seed:911, wobble:0.6, width:5 });
+    // beats: walk in from the left (u 0→0.35), then sit and enjoy
+    const walkU = 0.35;
+    if(u < walkU){
+      const k = easeInOut(u/walkU);
+      ctx.save(); ctx.translate(W*0.06 + (bx+30 - W*0.06)*k, fl - 76); ctx.scale(1.05, 1.05);
+      charFor(sc).draw(ctx, t, { mode:'walk', lookDir:1 });
+      ctx.restore();
+    } else {
+      ctx.save(); ctx.translate(bx+20, fl-48); ctx.scale(1.05, 1.05);
+      charFor(sc).draw(ctx, t, { mode:'sit', expr: u > 0.6 ? 'happy' : 'neutral', lookDir:-1 });
+      ctx.restore();
+    }
+  },
+
+  /* street — houses, and a car drives past; dude turns to watch it */
+  street(ctx, t, W, H, sc){
+    const u = t/sc.dur;
+    const fl = H*0.82;
+    floorLine(ctx, W, H, fl, 920);
+    drawHouse(ctx, W*0.06, fl, W*0.24, 921);
+    drawHouse(ctx, W*0.36, fl, W*0.19, 922);
+    drawCloud(ctx, W*((0.2 + t*0.010) % 1.15), H*0.13, 0.9, 923);
+    // car crosses during u 0.30→0.62
+    const carU = clamp01((u-0.30)/0.32);
+    const carX = -160 + (W+320)*easeInOut(carU);
+    drawCar(ctx, carX, fl-8, PORTRAIT ? 0.9 : 1.1, 924);
+    // dude on the right sidewalk, head follows the car
+    const dir = carU > 0.55 ? 1 : -1;
+    const expr = (carU > 0.05 && carU < 0.95) ? 'shocked' : 'neutral';
+    const bs = PORTRAIT ? 1.1 : 1.0;
+    ctx.save(); ctx.translate(W*0.78, fl - 72*bs); ctx.scale(bs, bs);
+    charFor(sc).draw(ctx, t, { mode:'stand', expr, lookDir:dir });
+    ctx.restore();
+  },
+
+  /* space — planet, stars, a floating astronaut, one shooting star */
+  space(ctx, t, W, H, sc){
+    const u = t/sc.dur;
+    const rng = new RNG(930);
+    for(let i=0;i<24;i++){
+      const fx = rng.next(), fy = rng.next()*0.9, r = 2.5 + rng.next()*4;
+      drawStar(ctx, W*fx, H*fy, r, 931+i, '#e8e4d8', 0.35+0.35*Math.sin(t*1.8+i*2.1));
+    }
+    drawPlanet(ctx, W*0.70 + Math.sin(t*0.2)*8, H*0.30 + Math.cos(t*0.16)*6, 56, 940);
+    // astronaut floats with a slow tumble
+    const bs = PORTRAIT ? 1.15 : 1.0;
+    ctx.save();
+    ctx.translate(W*0.36, H*0.55 + Math.sin(t*0.9)*12);
+    ctx.rotate(Math.sin(t*0.5)*0.10);
+    ctx.scale(bs, bs);
+    charFor(sc).draw(ctx, t + 0.3, { mode:'stand', expr:'happy', lookDir:1, arm:'wave' });
+    ctx.restore();
+    // shooting star
+    if(u > 0.55 && u < 0.78){
+      const k = (u-0.55)/0.23;
+      const sx = W*(0.88 - 0.5*k), sy = H*(0.12 + 0.28*k);
+      roughStroke(ctx, [[sx, sy],[sx+W*0.07, sy-H*0.04]], { seed:941, wobble:0.5, width:3.5, color:'#e8e4d8', alpha: Math.sin(k*Math.PI) });
+      dot(ctx, sx, sy, 4, '#fff', Math.sin(k*Math.PI));
+    }
+  },
+
+  /* lab — flasks bubble on the table; dude points at the reaction */
+  lab(ctx, t, W, H, sc){
+    const u = t/sc.dur;
+    const fl = H*0.82;
+    floorLine(ctx, W, H, fl, 950);
+    drawTable(ctx, W*0.34, fl, W*0.42, 951);
+    drawFlask(ctx, t, W*0.24, fl-78, 1.0, 952);
+    drawFlask(ctx, t*1.3, W*0.35, fl-78, 0.75, 953);
+    drawComputer(ctx, t, W*0.47, fl-78, 1.0, 954);
+    // shelf on the wall
+    roughStroke(ctx, [[W*0.06, H*0.30],[W*0.24, H*0.30]], { seed:955, wobble:0.8, width:5 });
+    drawFlask(ctx, t*0.8, W*0.11, H*0.30, 0.6, 956);
+    // dude watches the flask; flinches when a bubble pops
+    const popOn = (t % 2.0) < 0.2;
+    const bs = PORTRAIT ? 1.1 : 1.0;
+    ctx.save(); ctx.translate(W*0.80, fl - 72*bs); ctx.scale(bs, bs);
+    charFor(sc).draw(ctx, t, { mode:'stand', expr: popOn ? 'shocked' : 'neutral', lookDir:-1, point:true });
+    ctx.restore();
+  },
+};
+</script>
+<script>
+'use strict';
+/* ---------- default script (overridden by render script via __setScenes) ---------- */
+const DEFAULT_SCENES = [
+  { visual:'bedroom', dur:4.2, line:"You lived an entire life before the age of three." },
+  { visual:'crib',    dur:3.6, line:"You laughed. You babbled your very first word." },
+  { visual:'photos',  dur:4.0, line:"But today, you remember none of it." },
+  { visual:'brain',   dur:4.6, line:"Your brain's save button just wasn't wired yet." },
+  { visual:'neurons', dur:4.6, line:"New neurons grew so fast, they overwrote the old files." },
+  { visual:'mirror',  dur:4.6, line:"The old you was deleted, to make room for who you became." },
+  { visual:'endcard', dur:4.0, line:"So... what else did you forget?" },
+];
+
+/* ---------- scene manager ---------- */
+let SCENES = DEFAULT_SCENES.slice();
+let CUM = [];
+function rebuildCum(){
+  CUM = []; let acc = 0;
+  for(const s of SCENES){ CUM.push(acc); acc += s.dur; }
+  CUM.push(acc);
+}
+rebuildCum();
+window.__setScenes = function(arr){
+  SCENES = arr.map(s => ({ ...s }));
+  rebuildCum();
+  return CUM[CUM.length-1];
+};
+window.__duration = ()=> CUM[CUM.length-1];
+
+const FONT_CAP = '800 34px "Arial Rounded MT Bold","PingFang SC","Chalkboard SE","Comic Sans MS",sans-serif';
+
+// captions: 3-word chunks for spaced languages, punctuation/8-char chunks for CJK
+function chunkLine(line){
+  if(/\s/.test(line)){
+    const words = line.split(/\s+/).filter(Boolean);
+    const chunks = [];
+    for(let i=0;i<words.length;i+=3) chunks.push(words.slice(i, i+3).join(' '));
+    return chunks;
+  }
+  const segs = line.split(/(?<=[，。！？…；：、—])/).filter(Boolean);
+  const chunks = [];
+  for(const seg of segs){
+    let s = seg;
+    while(s.length > 9){ chunks.push(s.slice(0, 8)); s = s.slice(8); }
+    chunks.push(s);
+  }
+  // don't leave a lonely 1-2 char tail — merge it back
+  if(chunks.length > 1 && chunks[chunks.length-1].length <= 2)
+    chunks[chunks.length-2] += chunks.pop();
+  return chunks;
+}
+
+// plain white karaoke captions — no keyword art, no yellow
+function drawCaption(ctx, W, H, line, tLocal, dur){
+  if(!line) return;
+  const chunks = chunkLine(line);
+  const per = (dur*0.86) / chunks.length;
+  const idx = Math.min(chunks.length-1, Math.floor(Math.max(0, tLocal-0.15)/per));
+  ctx.save();
+  ctx.font = FONT_CAP;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = '#0e0c0a'; ctx.lineWidth = 8;
+  ctx.strokeText(chunks[idx], W/2, H-64);
+  ctx.fillStyle = '#f4efe4';
+  ctx.fillText(chunks[idx], W/2, H-64);
+  ctx.restore();
+}
+
+/* ---------- boot ---------- */
+const canvas = document.getElementById('cv');
+// portrait/vertical support: ?w=720&h=1280 (default 1280x720)
+const BOOT_PARAMS = new URLSearchParams(location.search);
+const BW = parseInt(BOOT_PARAMS.get('w') ?? '0', 10);
+const BH = parseInt(BOOT_PARAMS.get('h') ?? '0', 10);
+if(BW > 0 && BH > 0){ canvas.width = BW; canvas.height = BH; }
+const PORTRAIT = canvas.height > canvas.width;
+const ctx = canvas.getContext('2d');
+const CHARACTERS = {
+  dude:    new Dude(7),
+  cat:     new Pet(11, { ear:'pointy', coat:'#f4efe4', tailRate:1.8 }),
+  dog:     new Pet(13, { ear:'floppy', coat:'#c8a878', snout:true, patch:true, tailRate:5.5 }),
+  monster: new Monster(17),
+};
+const DUDE = CHARACTERS.dude;   // back-compat alias
+function charFor(sc){ return CHARACTERS[sc?.char] ?? CHARACTERS.dude; }
+const BACKDROPS = {};
+function backdropFor(visual){
+  if(!BACKDROPS[visual]){
+    const seeds = { bedroom:11, crib:22, photos:33, brain:44, neurons:55, mirror:66, endcard:77, roster:88,
+                    park:91, street:92, space:93, lab:94 };
+    const bases = { bedroom:['#3a2c1e','#574430'], crib:['#3d2c1a','#6b4c26'], photos:['#33291d','#4c3c28'],
+                    brain:['#2c2028','#4c3340'], neurons:['#1c2c40','#2e4258'], mirror:['#33291d','#524328'],
+                    endcard:['#171310','#2c241c'], roster:['#33291d','#4c3c28'],
+                    park:['#2c3020','#4c5c34'], street:['#2a2620','#4c4438'], space:['#101824','#223048'],
+                    lab:['#26221c','#4c4432'] };
+    const [base, glow] = bases[visual] ?? ['#1c1712','#33291d'];
+    BACKDROPS[visual] = makeBackdrop(canvas.width, canvas.height, seeds[visual] ?? 5, base, glow);
+  }
+  return BACKDROPS[visual];
+}
+
+function renderScene(i, tLocal, alpha){
+  const W = canvas.width, H = canvas.height;
+  const sc = SCENES[i];
+  const tl = Math.max(0, Math.min(tLocal, sc.dur));
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(backdropFor(sc.visual), 0, 0);
+  const [fx, fy, z] = camAt(sc, tl);
+  ctx.translate(W/2, H*0.52);
+  ctx.scale(z, z);
+  ctx.translate(-fx*W, -fy*H);
+  VISUALS[sc.visual]?.(ctx, tl, W, H, sc);
+  ctx.restore();
+}
+
+window.__seek = function(t){
+  const W = canvas.width, H = canvas.height;
+  const total = CUM[CUM.length-1];
+  t = Math.max(0, Math.min(t, total - 1e-6));
+  let i = 0;
+  while(i < SCENES.length-1 && t >= CUM[i+1]) i++;
+  const sc = SCENES[i];
+  const tLocal = t - CUM[i];
+
+  ctx.clearRect(0,0,W,H);
+  renderScene(i, tLocal, 1);
+
+  // cross-dissolve into the next shot over the last 0.45s
+  if(i < SCENES.length-1){
+    const XD = Math.min(0.45, SCENES[i+1].dur*0.3, sc.dur*0.3);
+    if(tLocal > sc.dur - XD){
+      const a = (tLocal - (sc.dur - XD)) / XD;
+      renderScene(i+1, t - CUM[i+1], a);
+    }
+  }
+
+  drawCaption(ctx, W, H, sc.line, tLocal, sc.dur);
+
+  const FI = 0.35, FO = 0.5;
+  if(t < FI){ ctx.fillStyle = `rgba(0,0,0,${1 - t/FI})`; ctx.fillRect(0,0,W,H); }
+  if(total - t < FO){ ctx.fillStyle = `rgba(0,0,0,${1 - (total-t)/FO})`; ctx.fillRect(0,0,W,H); }
+};
+
+const params = new URLSearchParams(location.search);
+if(params.has('live')){
+  const t0 = performance.now();
+  (function loop(){
+    window.__seek(((performance.now()-t0)/1000) % (CUM[CUM.length-1]));
+    requestAnimationFrame(loop);
+  })();
+}else{
+  window.__seek(0.01);
+}
+</script>
+</body>
+</html>

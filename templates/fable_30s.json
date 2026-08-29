@@ -1,0 +1,50 @@
+[
+  {
+    "visual": "park",
+    "char": "dude",
+    "line": "Lulabi koto fumu... wada nura kora...",
+    "cam": [[0, 0.55, 0.52, 1.00], [0.4, 0.50, 0.54, 1.04], [1, 0.46, 0.55, 1.15]]
+  },
+  {
+    "visual": "bedroom",
+    "char": "dude",
+    "line": "Popa! Taki wawa zula, mira kodo!",
+    "cam": [[0, 0.60, 0.52, 1.00], [0.5, 0.54, 0.50, 1.08], [1, 0.525, 0.56, 1.22]]
+  },
+  {
+    "visual": "photos",
+    "char": "dude",
+    "line": "Evana dura... piki piki vana crumble...",
+    "cam": [[0, 0.50, 0.50, 1.02], [1, 0.50, 0.48, 1.12]]
+  },
+  {
+    "visual": "brain",
+    "char": "monster",
+    "line": "Zap! Kora pikka sparka flincha!",
+    "cam": [[0, 0.50, 0.50, 1.00], [0.5, 0.47, 0.46, 1.06], [1, 0.56, 0.40, 1.15]]
+  },
+  {
+    "visual": "space",
+    "char": "dude",
+    "line": "Astra lumen... koro mira celestia stella!",
+    "cam": [[0, 0.50, 0.50, 1.00], [0.6, 0.46, 0.48, 1.08], [1, 0.42, 0.46, 1.18]]
+  },
+  {
+    "visual": "street",
+    "char": "cat",
+    "line": "Velo! Runa pikka kaza tori mew!",
+    "cam": [[0, 0.48, 0.52, 1.00], [1, 0.58, 0.50, 1.12]]
+  },
+  {
+    "visual": "mirror",
+    "char": "dude",
+    "line": "Metamo sula... vici vita nova wave!",
+    "cam": [[0, 0.50, 0.62, 1.00], [1, 0.50, 0.56, 1.18]]
+  },
+  {
+    "visual": "endcard",
+    "char": "dude",
+    "line": "Omnia vici... luma kodo eterna heart.",
+    "cam": [[0, 0.50, 0.52, 1.00], [1, 0.48, 0.52, 1.08]]
+  }
+]

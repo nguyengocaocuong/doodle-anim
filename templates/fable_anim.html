@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The Star Tree — A Hand-drawn Animated Fable</title>
+<style>
+  html,body{margin:0;padding:0;background:#1a1614;height:100%;overflow:hidden}
+  canvas{display:block;margin:0 auto}
+</style>
+</head>
+<body>
+<canvas id="cv" width="1280" height="720"></canvas>
+<script>
+'use strict';
+/* ============================================================
+ * The Star Tree (星树寓言) — 30-Second Hand-drawn Animated Fable
+ *
+ * 100% Procedural Canvas 2D Code. Zero image assets.
+ * Deterministic in time t & seed.
+ *
+ * Storyboard Structure (30.0s total):
+ * - Scene 1 [0.0s - 7.5s]: The Withered Hill & The Storm (Wide Pan -> Close-up)
+ *   Barren hill, howling wind particles. A lonely withered tree shivers.
+ *   An exhausted wounded bird flutters in against the storm, lands on a branch.
+ *
+ * - Scene 2 [7.5s - 14.5s]: The Gift of the Fallen Star (Extreme Push -> Eye-level)
+ *   The bird recovers, drops a glowing celestial star seed into the tree's hollow.
+ *   Warm golden sap pulses through the tree trunk like living veins.
+ *
+ * - Scene 3 [14.5s - 22.5s]: The Emerald Bloom & Celebration (Dynamic Orbit & Shake)
+ *   The tree explodes into vibrant green leaves and blooming pink blossoms!
+ *   Blossom petal storm fills the air. The bird takes flight in joy.
+ *   A curious little forest creature runs in and dances beneath the canopy.
+ *
+ * - Scene 4 [22.5s - 30.0s]: The Eternal Shelter (Cinematic Slow Pull-back)
+ *   Sunset turns to twilight. Fireflies rise. The once-barren wasteland
+ *   is now a sanctuary for all wanderers. Fable moral card fades in.
+ * ============================================================ */
+
+/* ---------- Seeded PRNG & Noise ---------- */
+function mulberry32(seed){
+  let a = seed >>> 0;
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+class RNG {
+  constructor(seed){ this.f = mulberry32(seed); }
+  next(){ return this.f(); }
+  range(a,b){ return a + (b-a)*this.f(); }
+  int(a,b){ return Math.floor(this.range(a, b+1)); }
+  pick(arr){ return arr[Math.floor(this.f()*arr.length)]; }
+  chance(p){ return this.f() < p; }
+}
+
+function makeNoise1D(seed){
+  const rng = mulberry32(seed);
+  const N = 128, table = new Float32Array(N*2);
+  for(let i=0;i<N;i++) table[i] = rng()*2-1;
+  for(let i=0;i<N;i++) table[N+i] = table[i];
+  return function(t){
+    const i = Math.floor(t), f = t - i;
+    const u = f*f*(3-2*f);
+    return table[i%N] + (table[(i+1)%N] - table[i%N]) * u;
+  };
+}
+
+const clamp01 = x => Math.max(0, Math.min(1, x));
+const smooth = x => { x = clamp01(x); return x*x*(3-2*x); };
+const easeInOut = x => { x = clamp01(x); return x<0.5 ? 2*x*x : 1-Math.pow(-2*x+2,2)/2; };
+const easeOutBack = x => { const c=1.70158; x = clamp01(x); return 1 + (c+1)*Math.pow(x-1,3) + c*Math.pow(x-1,2); };
+
+/* ---------- Pencil & Watercolor Rendering Helpers ---------- */
+const INK = '#231e1a';
+const CHARCOAL = '#322b26';
+
+function subdivide(pts, step=7){
+  if(pts.length < 2) return pts.slice();
+  const out = [pts[0].slice()];
+  for(let i=1;i<pts.length;i++){
+    const [x0,y0] = pts[i-1], [x1,y1] = pts[i];
+    const d = Math.hypot(x1-x0, y1-y0);
+    const n = Math.max(1, Math.round(d/step));
+    for(let k=1;k<=n;k++){
+      const u = k/n;
+      out.push([x0+(x1-x0)*u, y0+(y1-y0)*u]);
+    }
+  }
+  return out;
+}
+
+function wobblePts(pts, seed, mag=1.4, close=false){
+  const nx = makeNoise1D(seed), ny = makeNoise1D(seed+101);
+  return pts.map((p,i)=>{
+    let dx = nx(i*0.35)*mag, dy = ny(i*0.35)*mag;
+    if(close && (i===0 || i===pts.length-1)){ dx = nx(0)*mag; dy = ny(0)*mag; }
+    return [p[0]+dx, p[1]+dy];
+  });
+}
+
+function pathFrom(pts, close=false){
+  const p = new Path2D();
+  if(!pts.length) return p;
+  p.moveTo(pts[0][0], pts[0][1]);
+  for(let i=1;i<pts.length;i++) p.lineTo(pts[i][0], pts[i][1]);
+  if(close) p.closePath();
+  return p;
+}
+
+function roughStroke(ctx, pts, o={}){
+  if(pts.length < 2) return;
+  const seed = o.seed ?? 1;
+  const sub = subdivide(pts, o.step ?? 7);
+  ctx.save();
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.strokeStyle = o.color ?? INK;
+  for(let pass=0; pass<2; pass++){
+    const wp = wobblePts(sub, seed + pass*9171, (o.wobble ?? 1.3)*(pass?0.8:1), o.close ?? false);
+    ctx.globalAlpha *= pass ? (o.alpha ?? 1)*0.4 : (o.alpha ?? 1);
+    ctx.lineWidth = pass ? (o.width ?? 3)*0.7 : (o.width ?? 3);
+    ctx.stroke(pathFrom(wp, o.close ?? false));
+  }
+  ctx.restore();
+}
+
+function washFill(ctx, pts, color, o={}){
+  const seed = o.seed ?? 1;
+  const layers = o.layers ?? 3;
+  const sub = subdivide(pts, 9);
+  ctx.save();
+  ctx.fillStyle = color;
+  for(let L=0; L<layers; L++){
+    const grow = (o.bleed ?? 2.5) * (L+1)/layers;
+    const nx = makeNoise1D(seed + L*37);
+    const wob = sub.map((p,i)=> [p[0] + nx(i*0.4)*grow, p[1] + nx(i*0.4+7)*grow]);
+    ctx.globalAlpha *= (o.alpha ?? 0.22) * (1 - 0.3*L/layers);
+    ctx.fill(pathFrom(wob, true));
+  }
+  ctx.restore();
+}
+
+function shape(ctx, pts, o={}){
+  if(o.fill) washFill(ctx, pts, o.fill, o);
+  roughStroke(ctx, pts, { ...o, close:true });
+}
+
+function ellipsePts(cx, cy, rx, ry, n=20, rot=0){
+  const pts=[];
+  for(let i=0;i<n;i++){
+    const a = i/n*Math.PI*2;
+    const x = Math.cos(a)*rx, y = Math.sin(a)*ry;
+    pts.push([cx + x*Math.cos(rot)-y*Math.sin(rot), cy + x*Math.sin(rot)+y*Math.cos(rot)]);
+  }
+  return pts;
+}
+
+function dot(ctx, x, y, r, color=INK, alpha=1){
+  ctx.save();
+  ctx.globalAlpha *= alpha; ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+/* ============================================================
+ * Cinematic Elements
+ * ============================================================ */
+
+/* ---------- Procedural Tree Character ---------- */
+function drawTree(ctx, t, x, y, bloomStage, wind, seed=77){
+  ctx.save();
+  ctx.translate(x, y);
+
+  const s = seed;
+  const treeSway = Math.sin(t*1.8)*wind*0.06;
+  ctx.rotate(treeSway);
+
+  // Trunk
+  const trunkBaseW = 42, trunkTopW = 20, trunkH = 220;
+  const trunkPts = [
+    [-trunkBaseW*1.2, 0],
+    [-trunkBaseW*0.6, -trunkH*0.3],
+    [-trunkTopW, -trunkH],
+    [trunkTopW, -trunkH],
+    [trunkBaseW*0.6, -trunkH*0.3],
+    [trunkBaseW*1.2, 0]
+  ];
+  const woodColor = bloomStage > 0.4 ? '#4a3d31' : '#3d342c';
+  shape(ctx, trunkPts, { seed:s, fill:woodColor, width:4.5, close:true, alpha:0.95 });
+
+  // Bark textures / living wrinkles
+  for(let k=1; k<=5; k++){
+    const by = -trunkH * (k/6);
+    const bw = trunkBaseW * (1 - k/7);
+    roughStroke(ctx, [[-bw*0.5, by],[bw*0.5, by + 4]], { seed:s+k*13, width:2, alpha:0.55 });
+  }
+
+  // Tree Hollow / Eye (The heart cavity)
+  const hollowY = -trunkH * 0.42;
+  shape(ctx, ellipsePts(0, hollowY, 14, 20, 14), { seed:s+50, fill:'#1a1410', width:3.5, close:true });
+
+  // Glowing Star Seed in hollow (Scene 2 onwards)
+  if(t >= 9.5){
+    const pulse = 0.75 + 0.25*Math.sin(t*4);
+    const starColor = '#ffe066';
+    dot(ctx, 0, hollowY, 9*pulse, starColor, 0.95);
+    dot(ctx, 0, hollowY, 22*pulse, '#ffd13b', 0.35);
+
+    // Glowing sap veins climbing up the trunk (Scene 2 & 3)
+    if(bloomStage < 0.95){
+      const veinH = Math.min(trunkH, (t - 9.5) * 45);
+      for(const side of [-1, 1]){
+        const veinPts = [
+          [side*4, hollowY - 6],
+          [side*10, hollowY - veinH*0.4],
+          [side*6, hollowY - veinH*0.8],
+          [side*12, hollowY - veinH]
+        ];
+        roughStroke(ctx, veinPts, { seed:s+80+side, width:3, color:'#ffe873', alpha:0.85 });
+      }
+    }
+  }
+
+  // Primary Branches
+  const branches = [
+    { start: [-trunkTopW*0.6, -trunkH], end: [-120, -trunkH - 110], sub: [-170, -trunkH - 160], angle: -0.35 },
+    { start: [trunkTopW*0.6, -trunkH], end: [125, -trunkH - 105], sub: [180, -trunkH - 150], angle: 0.38 },
+    { start: [0, -trunkH], end: [-25, -trunkH - 170], sub: [-45, -trunkH - 220], angle: -0.05 },
+    { start: [-trunkBaseW*0.5, -trunkH*0.6], end: [-110, -trunkH*0.75], sub: [-145, -trunkH*0.95], angle: -0.45 },
+    { start: [trunkBaseW*0.5, -trunkH*0.55], end: [105, -trunkH*0.7], sub: [140, -trunkH*0.85], angle: 0.42 }
+  ];
+
+  branches.forEach((b, idx)=>{
+    const bSway = Math.sin(t*2.2 + idx)*wind*0.08;
+    const bx = b.end[0] + bSway*30, by = b.end[1];
+    const sx = b.sub[0] + bSway*50, sy = b.sub[1];
+
+    roughStroke(ctx, [b.start, [bx, by], [sx, sy]], { seed:s+100+idx, width:3.6, color:woodColor });
+
+    // Foliage & Blossoms explosion (Scene 3 & 4)
+    if(bloomStage > 0.05){
+      const leafCount = Math.floor(12 * bloomStage);
+      const rngL = new RNG(s + idx*77);
+      for(let j=0; j<leafCount; j++){
+        const lx = bx + (rngL.next()-0.5)*70;
+        const ly = by + (rngL.next()-0.5)*60;
+        const lr = rngL.range(12, 24) * bloomStage;
+        const leafColor = rngL.pick(['#6a9955', '#558242', '#7cb864', '#486e38']);
+        shape(ctx, ellipsePts(lx, ly, lr, lr*0.7, 10, rngL.range(-1,1)),
+          { seed:s+200+idx*20+j, fill:leafColor, width:1.5, alpha:0.75 });
+
+        // Pink Cherry Blossoms
+        if(rngL.chance(0.45)){
+          shape(ctx, ellipsePts(lx + rngL.range(-6,6), ly + rngL.range(-6,6), lr*0.45, lr*0.45, 8),
+            { seed:s+300+j, fill:'#ffb3c1', width:1.2, alpha:0.85 });
+          dot(ctx, lx, ly, 2, '#fff', 0.9);
+        }
+      }
+    }
+  });
+
+  ctx.restore();
+}
+
+/* ---------- Procedural Bird Character ---------- */
+function drawBird(ctx, t, x, y, scale=1, state='fly', rot=0, seed=33){
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rot);
+  ctx.scale(scale, scale);
+
+  const s = seed;
+  const flap = Math.sin(t * 14);
+  const isFlying = state === 'fly';
+
+  // Body
+  const bodyPts = ellipsePts(0, 0, 16, 12, 14);
+  shape(ctx, bodyPts, { seed:s, fill:'#4a7c99', width:2.5, close:true });
+
+  // Head & Beak
+  const headX = 14, headY = -6;
+  shape(ctx, ellipsePts(headX, headY, 10, 10, 12), { seed:s+1, fill:'#5a92b2', width:2.2, close:true });
+
+  // Eye (Blinking)
+  const blink = (t % 3.2) < 0.12;
+  if(blink){
+    roughStroke(ctx, [[headX+2, headY-2],[headX+6, headY-2]], { seed:s+2, width:1.8 });
+  } else {
+    dot(ctx, headX+4, headY-2, 2.2, '#fff', 1);
+    dot(ctx, headX+5, headY-2, 1.2, INK, 1);
+  }
+
+  // Beak (Holding Star in Scene 1 & 2)
+  const beakPts = [[headX+8, headY-2], [headX+18, headY], [headX+8, headY+3]];
+  shape(ctx, beakPts, { seed:s+3, fill:'#e8a838', width:1.8, close:true });
+
+  // Star in beak
+  if(state === 'holdStar'){
+    const starGlow = 0.8 + 0.2*Math.sin(t*8);
+    dot(ctx, headX+18, headY+1, 6*starGlow, '#fff275', 0.95);
+    dot(ctx, headX+18, headY+1, 14*starGlow, '#ffe066', 0.35);
+  }
+
+  // Wings
+  if(isFlying){
+    const wingY = flap * 18;
+    const wingPts = [[-4, -2], [4, wingY - 14], [-12, wingY - 6]];
+    shape(ctx, wingPts, { seed:s+4, fill:'#37637d', width:2.4, close:true });
+  } else {
+    // Folded wing
+    const wingPts = [[-6, -4], [6, -2], [-2, 8]];
+    shape(ctx, wingPts, { seed:s+4, fill:'#37637d', width:2.2, close:true });
+  }
+
+  // Tail feathers
+  const tailPts = [[-14, 0], [-26, -4], [-24, 4]];
+  shape(ctx, tailPts, { seed:s+5, fill:'#2d5269', width:2.0, close:true });
+
+  // Emotes (Sweat / Heart / Music)
+  if(state === 'tired'){
+    dot(ctx, headX-2, headY-14, 3, '#7cc4e8', 0.85);
+  } else if(state === 'happy'){
+    dot(ctx, headX+2, headY-16, 4, '#ff758f', 0.9);
+  }
+
+  ctx.restore();
+}
+
+/* ---------- Curious Fox / Forest Creature ---------- */
+function drawFox(ctx, t, x, y, scale=1, seed=88){
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+
+  const s = seed;
+  const bounce = -Math.abs(Math.sin(t*6))*8;
+  ctx.translate(0, bounce);
+
+  // Body
+  shape(ctx, ellipsePts(0, -18, 22, 14, 14), { seed:s, fill:'#d4703b', width:2.6, close:true });
+  // Head
+  shape(ctx, ellipsePts(18, -32, 13, 11, 12), { seed:s+1, fill:'#df7d47', width:2.4, close:true });
+  // Ears
+  shape(ctx, [[12,-40],[16,-52],[20,-39]], { seed:s+2, fill:'#d4703b', width:2, close:true });
+  shape(ctx, [[20,-39],[24,-51],[28,-38]], { seed:s+3, fill:'#d4703b', width:2, close:true });
+  // Snout & Nose
+  shape(ctx, [[26,-32],[36,-30],[26,-26]], { seed:s+4, fill:'#f4ece1', width:1.8, close:true });
+  dot(ctx, 36, -30, 2.2, INK, 1);
+  // Eye
+  dot(ctx, 22, -34, 2.2, INK, 1);
+  // Fluffy Tail (wagging)
+  const wag = Math.sin(t*8)*0.3;
+  ctx.save();
+  ctx.translate(-18, -18);
+  ctx.rotate(-0.4 + wag);
+  shape(ctx, ellipsePts(-14, -6, 18, 9, 12), { seed:s+5, fill:'#d4703b', width:2.2, close:true });
+  shape(ctx, ellipsePts(-28, -6, 7, 6, 10), { seed:s+6, fill:'#f4ece1', width:1.8, close:true });
+  ctx.restore();
+  // Legs
+  roughStroke(ctx, [[-10, -6], [-10, 0]], { seed:s+7, width:3 });
+  roughStroke(ctx, [[-4, -6], [-4, 0]], { seed:s+8, width:3 });
+  roughStroke(ctx, [[10, -6], [10, 0]], { seed:s+9, width:3 });
+  roughStroke(ctx, [[16, -6], [16, 0]], { seed:s+10, width:3 });
+
+  ctx.restore();
+}
+
+/* ---------- Environmental Particles (Wind, Falling Petals, Fireflies) ---------- */
+function drawAtmosphere(ctx, t, W, H, sceneIndex){
+  const rng = new RNG(12345);
+
+  // Scene 1: Howling Wind Lines
+  if(sceneIndex === 1){
+    for(let i=0; i<16; i++){
+      const speed = 350 + (i%5)*70;
+      const wx = ((t*speed + i*140) % (W + 300)) - 150;
+      const wy = (i*45 + Math.sin(t*2 + i)*30) % (H*0.85);
+      const wlen = 60 + (i%4)*40;
+      roughStroke(ctx, [[wx, wy], [wx - wlen, wy + 8]], { seed:2000+i, width:1.8, color:'#d8cbba', alpha:0.35 });
+    }
+  }
+
+  // Scene 3 & 4: Falling Blossom Petals
+  if(sceneIndex >= 3){
+    for(let i=0; i<45; i++){
+      const fallSpeed = 50 + (i%6)*20;
+      const driftSpeed = 80 + (i%4)*30;
+      const px = ((t*driftSpeed + i*60) % (W + 200)) - 100;
+      const py = ((t*fallSpeed + i*90) % (H + 100)) - 50;
+      const rot = t*3 + i;
+      const pr = 4 + (i%4)*2;
+      shape(ctx, ellipsePts(px, py, pr, pr*0.5, 8, rot), { seed:3000+i, fill:'#ffb3c1', width:1.0, alpha:0.75 });
+    }
+  }
+
+  // Scene 4: Glowing Fireflies
+  if(sceneIndex === 4){
+    for(let i=0; i<24; i++){
+      const fx = (W*0.15 + (i*55 + Math.sin(t*0.8 + i)*60)) % W;
+      const fy = (H*0.35 + (i*35 + Math.cos(t*0.6 + i)*45)) % (H*0.88);
+      const blink = Math.max(0, Math.sin(t*2.5 + i*1.3));
+      dot(ctx, fx, fy, 2.5, '#fff', blink*0.9);
+      dot(ctx, fx, fy, 8, '#ffe066', blink*0.4);
+    }
+  }
+}
+
+/* ============================================================
+ * Cinematic Camera & Story Director
+ * ============================================================ */
+
+/* Camera keyframe evaluator */
+function getCamera(t){
+  // [time, cx (center X), cy (center Y), zoom, screenShake]
+  const keys = [
+    [0.0,  0.50, 0.55, 1.00, 0],   // Scene 1 Wide Opening
+    [4.0,  0.58, 0.58, 1.18, 0],   // Scene 1 Tracking Bird In
+    [7.5,  0.50, 0.50, 1.35, 0],   // Scene 2 Close-up Drop Star
+    [11.0, 0.50, 0.52, 1.45, 0],   // Scene 2 Sap Pulse
+    [14.5, 0.50, 0.50, 1.15, 6],   // Scene 3 Bloom Burst (Shake!)
+    [18.5, 0.46, 0.54, 1.25, 0],   // Scene 3 Joyful Flight & Fox Dance
+    [22.5, 0.50, 0.55, 1.10, 0],   // Scene 4 Sunset Sanctuary
+    [30.0, 0.50, 0.58, 0.95, 0]    // Scene 4 Epic Slow Pull-back
+  ];
+
+  for(let i=0; i<keys.length-1; i++){
+    if(t >= keys[i][0] && t <= keys[i+1][0]){
+      const u = smooth((t - keys[i][0]) / (keys[i+1][0] - keys[i][0]));
+      const k0 = keys[i], k1 = keys[i+1];
+      return {
+        cx: k0[1] + (k1[1]-k0[1])*u,
+        cy: k0[2] + (k1[2]-k0[2])*u,
+        zoom: k0[3] + (k1[3]-k0[3])*u,
+        shake: (k0[4] + (k1[4]-k0[4])*u) * Math.sin(t*45)
+      };
+    }
+  }
+  const last = keys[keys.length-1];
+  return { cx:last[1], cy:last[2], zoom:last[3], shake:0 };
+}
+
+/* ============================================================
+ * Main Render Function (window.__seek API)
+ * ============================================================ */
+const canvas = document.getElementById('cv');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const TOTAL_DUR = 30.0;
+
+window.__duration = ()=> TOTAL_DUR;
+
+window.__seek = function(t){
+  t = Math.max(0, Math.min(TOTAL_DUR, t));
+  ctx.clearRect(0,0,W,H);
+
+  // 1. Sky Gradient & Time of Day
+  // Morning Storm (0-7.5s) -> Golden Twilight (7.5-14.5s) -> Emerald Day (14.5-22.5s) -> Purple Starlight (22.5-30s)
+  let skyTop = '#1a181e', skyBot = '#3a322c';
+  if(t < 7.5){
+    skyTop = '#1c1c24'; skyBot = '#423832';
+  } else if(t < 14.5){
+    const u = (t - 7.5)/7.0;
+    skyTop = '#2a1e28'; skyBot = '#784e38';
+  } else if(t < 22.5){
+    const u = (t - 14.5)/8.0;
+    skyTop = '#1e3848'; skyBot = '#4a785c';
+  } else {
+    const u = (t - 22.5)/7.5;
+    skyTop = '#101224'; skyBot = '#38223c';
+  }
+
+  const skyGrad = ctx.createLinearGradient(0,0,0,H);
+  skyGrad.addColorStop(0, skyTop);
+  skyGrad.addColorStop(1, skyBot);
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(0,0,W,H);
+
+  // 2. Camera Transform
+  const cam = getCamera(t);
+  ctx.save();
+  ctx.translate(W/2 + cam.shake, H/2 + cam.shake);
+  ctx.scale(cam.zoom, cam.zoom);
+  ctx.translate(-W*cam.cx, -H*cam.cy);
+
+  // 3. Moon / Sun
+  if(t < 14.5){
+    // Pale storm moon
+    dot(ctx, W*0.75, H*0.22, 38, '#d4cebe', 0.65);
+  } else if(t < 22.5){
+    // Golden blooming sun
+    dot(ctx, W*0.78, H*0.20, 48, '#ffe885', 0.75);
+    dot(ctx, W*0.78, H*0.20, 110, '#ffd13b', 0.2);
+  } else {
+    // Crescent night moon
+    dot(ctx, W*0.75, H*0.22, 36, '#f4ecd8', 0.85);
+  }
+
+  // 4. Background Distant Mountains
+  const mountainPts = [
+    [-100, H*0.78],
+    [W*0.2, H*0.58],
+    [W*0.5, H*0.68],
+    [W*0.8, H*0.52],
+    [W+200, H*0.75],
+    [W+200, H+100],
+    [-100, H+100]
+  ];
+  const mtnColor = t >= 14.5 ? '#243c32' : '#282320';
+  shape(ctx, mountainPts, { seed:500, fill:mtnColor, width:3, close:true, alpha:0.9 });
+
+  // 5. Fore-Hill (The Sanctuary Hill)
+  const hillY = H * 0.76;
+  const hillPts = [
+    [-100, hillY + 40],
+    [W*0.25, hillY - 20],
+    [W*0.50, hillY - 35],
+    [W*0.75, hillY - 10],
+    [W+150, hillY + 50],
+    [W+150, H+150],
+    [-100, H+150]
+  ];
+  const hillColor = t >= 14.5 ? '#3b5e43' : '#332924';
+  shape(ctx, hillPts, { seed:600, fill:hillColor, width:4.5, close:true, alpha:0.95 });
+
+  // 6. Tree Actor
+  const treeX = W * 0.50, treeY = hillY - 35;
+  const bloomStage = clamp01((t - 14.0) / 4.5);
+  const windStrength = t < 7.5 ? 1.0 : (t < 14.5 ? 0.4 : 0.25);
+  drawTree(ctx, t, treeX, treeY, bloomStage, windStrength, 77);
+
+  // 7. Bird Actor (Motion Choreography)
+  const branchLandingX = treeX - 95, branchLandingY = treeY - 220;
+
+  if(t < 5.5){
+    // Scene 1: Bird flying in against the storm
+    const flightU = easeInOut(t / 5.5);
+    const bx = -80 + (branchLandingX - (-80)) * flightU;
+    const by = H*0.25 + Math.sin(t*3)*25 + (branchLandingY - H*0.25)*flightU;
+    drawBird(ctx, t, bx, by, 1.1, 'holdStar', 0.15, 33);
+  } else if(t < 8.0){
+    // Scene 1->2: Bird exhausted on branch, panting
+    drawBird(ctx, t, branchLandingX, branchLandingY, 1.1, 'holdStar', 0, 33);
+  } else if(t < 10.0){
+    // Scene 2: Drops the star into tree hollow
+    const dropU = clamp01((t - 8.0) / 1.5);
+    drawBird(ctx, t, branchLandingX, branchLandingY, 1.1, 'tired', 0.1, 33);
+    if(t < 9.5){
+      // Star falling path
+      const starX = branchLandingX + 15 + dropU*10;
+      const starY = branchLandingY + dropU*(treeY - 140 - branchLandingY);
+      dot(ctx, starX, starY, 7, '#fff275', 0.95);
+      dot(ctx, starX, starY, 16, '#ffe066', 0.4);
+    }
+  } else if(t < 15.0){
+    // Scene 2: Resting, watching tree awaken
+    drawBird(ctx, t, branchLandingX, branchLandingY, 1.1, 'happy', -0.05, 33);
+  } else if(t < 23.0){
+    // Scene 3: Happy Flight Spirals around the blooming tree
+    const spiralT = (t - 15.0) * 1.5;
+    const flyRadius = 140 + Math.sin(spiralT*0.8)*40;
+    const bx = treeX + Math.cos(spiralT)*flyRadius;
+    const by = treeY - 220 + Math.sin(spiralT*2)*50;
+    const rot = Math.cos(spiralT) > 0 ? 0.2 : -0.2;
+    drawBird(ctx, t, bx, by, 1.15, 'fly', rot, 33);
+  } else {
+    // Scene 4: Perched happily atop the highest blooming branch
+    drawBird(ctx, t, treeX + 30, treeY - 330, 1.1, 'happy', 0, 33);
+  }
+
+  // 8. Fox Actor (Appears in Scene 3 & 4)
+  if(t >= 16.5){
+    const foxEntrance = clamp01((t - 16.5) / 3.0);
+    const foxX = W*0.1 + (treeX + 90 - W*0.1) * easeInOut(foxEntrance);
+    const foxY = hillY - 8;
+    drawFox(ctx, t, foxX, foxY, 0.95, 88);
+  }
+
+  // 9. Environmental Atmosphere
+  const sceneIdx = t < 7.5 ? 1 : (t < 14.5 ? 2 : (t < 22.5 ? 3 : 4));
+  drawAtmosphere(ctx, t, W, H, sceneIdx);
+
+  ctx.restore(); // Restore Camera
+};
+
+/* ---------- Interactive live preview ---------- */
+const params = new URLSearchParams(location.search);
+if(params.has('live')){
+  const t0 = performance.now();
+  (function loop(){
+    const t = ((performance.now() - t0) / 1000) % TOTAL_DUR;
+    window.__seek(t);
+    requestAnimationFrame(loop);
+  })();
+} else {
+  window.__seek(0.01);
+}
+</script>
+</body>
+</html>
