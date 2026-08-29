@@ -18,23 +18,77 @@
 
 `doodle-anim` is an agent-ready, code-first 2D procedural animation pipeline. It requires **no graphic assets, no sprite sheets, and no heavy 3D DCC tools**. Everything — from watercolor paper textures, pencil jitter strokes, and character anatomy to bone kinematics, facial expressions, and camera keyframes — is calculated entirely in code using native **HTML5 Canvas 2D** and seeded PRNG mathematics.
 
-It also integrates an automated frame-exact capture pipeline using Playwright & ffmpeg, alongside synthesized audio beds and macOS TTS narration with synchronized karaoke subtitles.
+---
 
-### 🌟 Showcase & Style Family
+### 🌟 Visual Showcase (All 100% Code-Rendered)
 
-| Style Family | Description | Preview Image | Video Case |
-|---|---|---|---|
-| **Friends Generator** *(Threeaio Style)* | Cream paper + ink jitter + 4×2 procedural avatar lineup (12 hairstyles, 7 eye shapes, random syllable names). | [`out/avatar_previews/friends_preview.png`](out/avatar_previews/friends_preview.png) | [`out/friends/anim.mp4`](out/friends/anim.mp4) |
-| **Mannay Charcoal Wall** *(Mannay Style)* | Kraft paper + rough charcoal strokes + 6×4 expressive portrait wall with dark eye sockets & offset watercolor blocks. | [`out/avatar_previews/mannay_preview.png`](out/avatar_previews/mannay_preview.png) | [`out/mannay/anim.mp4`](out/mannay/anim.mp4) |
-| **Cyberpunk Anime Faces** *(Kevin Ngo Style)* | 6×3 matrix of cybernetic anime avatars, tapered jawlines, visors, masks, headsets, and 4s blink loop. | [`out/avatar_previews/faces_preview.png`](out/avatar_previews/faces_preview.png) | [`out/faces/anim.mp4`](out/faces/anim.mp4) |
-| **Oddhead Family** *(Alberto Style)* | 60% head-to-body ratio + zigzag pencil cross-hatching hair + 24 quirky expressions & props. | [`out/avatar_previews/oddhead_preview.png`](out/avatar_previews/oddhead_preview.png) | [`out/oddhead/anim.mp4`](out/oddhead/anim.mp4) |
-| **Weirdo Family** | 24 quirky capsule/bean fusion characters, spinning propeller hats, and animated sprouts with single-focal-point design. | [`out/avatar_previews/weirdo_preview.png`](out/avatar_previews/weirdo_preview.png) | [`out/weirdo/anim.mp4`](out/weirdo/anim.mp4) |
-| **Classic Roster Lineup** | 28-character lineup: 2 rows of humans + 1 row of dogs + 1 row of cats + 1 row of nightmare blobs with idle breathing & emotes. | [`out/avatar_previews/roster_preview.png`](out/avatar_previews/roster_preview.png) | [`out/roster/anim.mp4`](out/roster/anim.mp4) |
+#### 1. Procedural Character Avatar Generators & Walls
 
-#### 🎬 Cinematic Shorts & Science Explainers
-- **The Heist of Ink (30s Story Short)**: [`out/cinematic_fable/the_heist_of_ink_30s.mp4`](out/cinematic_fable/the_heist_of_ink_30s.mp4) (Procedural OST + Multi-shot Action Beats)
-- **Sketchbook Metropolis (30s Story Short)**: [`out/mannay_story/sketchbook_metropolis_30s.mp4`](out/mannay_story/sketchbook_metropolis_30s.mp4)
-- **Zenn-style Explainer (TTS + Subtitles + Camera Moves)**: [`out/baby-zh-v/explainer.mp4`](out/baby-zh-v/explainer.mp4) (9:16 Vertical Video for Shorts/TikTok/Xiaohongshu)
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <b>Friends Generator (Threeaio Style)</b><br/>
+      <img src="assets/gifs/friends.gif" width="100%" /><br/>
+      <sub>Cream paper + ink jitter + 4×2 procedural avatars</sub><br/>
+      <a href="templates/friends.html">▶ Live HTML Template</a> | <a href="out/friends/anim.mp4">▶ Video (MP4)</a>
+    </td>
+    <td width="50%" align="center">
+      <b>Mannay Expressive Charcoal (Mannay Style)</b><br/>
+      <img src="assets/gifs/mannay.gif" width="100%" /><br/>
+      <sub>Kraft paper + charcoal strokes + offset watercolor</sub><br/>
+      <a href="templates/mannay.html">▶ Live HTML Template</a> | <a href="out/mannay/anim.mp4">▶ Video (MP4)</a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <b>Cyberpunk Anime Faces (Kevin Ngo Style)</b><br/>
+      <img src="assets/gifs/faces.gif" width="100%" /><br/>
+      <sub>6×3 anime matrix, visors, masks, headsets, 4s blink loop</sub><br/>
+      <a href="templates/faces.html">▶ Live HTML Template</a> | <a href="out/faces/anim.mp4">▶ Video (MP4)</a>
+    </td>
+    <td width="50%" align="center">
+      <b>Oddhead Family (Alberto Style)</b><br/>
+      <img src="assets/gifs/oddhead.gif" width="100%" /><br/>
+      <sub>60% head ratio + zigzag pencil cross-hatching hair</sub><br/>
+      <a href="templates/doodle.html">▶ Live HTML Template</a> | <a href="out/oddhead/anim.mp4">▶ Video (MP4)</a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <b>Weirdo Family (Quirky Props & Sprout)</b><br/>
+      <img src="assets/gifs/weirdo.gif" width="100%" /><br/>
+      <sub>24 capsule/bean characters, spinning propellers & sprouts</sub><br/>
+      <a href="templates/doodle.html">▶ Live HTML Template</a> | <a href="out/weirdo/anim.mp4">▶ Video (MP4)</a>
+    </td>
+    <td width="50%" align="center">
+      <b>Classic Alberto 28-Character Lineup</b><br/>
+      <img src="assets/gifs/roster.gif" width="100%" /><br/>
+      <sub>Humans + Dogs + Cats + Nightmare Blobs idle lineup</sub><br/>
+      <a href="templates/replica.html">▶ Live HTML Template</a> | <a href="out/roster/anim.mp4">▶ Video (MP4)</a>
+    </td>
+  </tr>
+</table>
+
+---
+
+#### 2. Cinematic Story Shorts & Explainer Videos
+
+<table>
+  <tr>
+    <td width="60%" align="center">
+      <b>The Heist of Ink (30s Cinematic Story Short)</b><br/>
+      <img src="assets/gifs/heist_of_ink.gif" width="100%" /><br/>
+      <sub>Procedural OST + Multi-shot Action Beats + Emotes</sub><br/>
+      <a href="templates/cinematic_fable.html">▶ View HTML Template</a> | <a href="out/cinematic_fable/the_heist_of_ink_30s.mp4">▶ Watch Full 30s Video (MP4)</a>
+    </td>
+    <td width="40%" align="center">
+      <b>Zenn-style Explainer (TTS + Subtitles)</b><br/>
+      <img src="assets/gifs/explainer_vertical.gif" width="100%" /><br/>
+      <sub>9:16 Vertical Video with voiceover & karaoke captions</sub><br/>
+      <a href="templates/explainer.html">▶ View HTML Template</a> | <a href="out/baby-zh-v/explainer.mp4">▶ Watch Full Video (MP4)</a>
+    </td>
+  </tr>
+</table>
 
 ---
 
@@ -94,21 +148,77 @@ Any new animation module implemented within this pipeline adheres to the followi
 
 `doodle-anim` 是一个面向 AI Agent 与前端代码手绘的 2D 过程式动画管线。它**不需要任何图片素材、帧动画雪碧图或 3D 建模软件**。从水彩纸纹理、铅笔抖线、角色五官，到骨骼行走步态、情绪气泡和运镜推拉，全部通过**原生 HTML5 Canvas 2D + 数学公式**纯代码实时计算。
 
-### 🌟 风格体系与案例展示
+---
 
-| 风格家族 | 视觉特征 | 高清截图预览 | 动画成片 (MP4) |
-|---|---|---|---|
-| **Friends 涂鸦朋友** *(Threeaio 风格)* | 奶油纸底 + 抖动墨线 + 4×2 种子化头像（12 种发型、7 种眼型、随机音节名字）。 | [`out/avatar_previews/friends_preview.png`](out/avatar_previews/friends_preview.png) | [`out/friends/anim.mp4`](out/friends/anim.mp4) |
-| **Mannay 炭笔肖像墙** *(Mannay 风格)* | 牛皮纸底 + 粗粝炭笔线条 + 6×4 表现主义头像（密集卷毛云/针织冷帽/黑眼窝/错位水彩印染）。 | [`out/avatar_previews/mannay_preview.png`](out/avatar_previews/mannay_preview.png) | [`out/mannay/anim.mp4`](out/mannay/anim.mp4) |
-| **Faces 赛博动漫脸** *(Kevin Ngo 风格)* | 6×3 赛博动漫头像、锥度脸型、护目镜/耳机/面罩、4 秒呼吸眨眼循环。 | [`out/avatar_previews/faces_preview.png`](out/avatar_previews/faces_preview.png) | [`out/faces/anim.mp4`](out/faces/anim.mp4) |
-| **Oddhead 大头仔家族** *(Alberto 风格)* | 头占身高 60% + 锯齿排线头发 + 24 只丑萌大头仔（搞怪件/高低眼/呆滞感）。 | [`out/avatar_previews/oddhead_preview.png`](out/avatar_previews/oddhead_preview.png) | [`out/oddhead/anim.mp4`](out/oddhead/anim.mp4) |
-| **Weirdo 怪咖家族** | 24 只胶囊/豆子融合身体，螺旋桨帽/小苗晃动，单记忆点留白设计。 | [`out/avatar_previews/weirdo_preview.png`](out/avatar_previews/weirdo_preview.png) | [`out/weirdo/anim.mp4`](out/weirdo/anim.mp4) |
-| **Roster 经典全阵容** | 28 只全阵容临摹：人类两排 + 狗一排 + 猫一排 + 梦魇怪，原地待机呼吸与表情冒泡。 | [`out/avatar_previews/roster_preview.png`](out/avatar_previews/roster_preview.png) | [`out/roster/anim.mp4`](out/roster/anim.mp4) |
+### 🌟 视觉案例画廊（全部纯代码实时渲染）
 
-#### 🎬 剧情短片与科普解说成片
-- **《墨水大劫案》（30s 电影感剧情短片）**：[`out/cinematic_fable/the_heist_of_ink_30s.mp4`](out/cinematic_fable/the_heist_of_ink_30s.mp4)（程序化原声配乐 + 多分镜节拍）
-- **《炭笔大都市》（30s 分镜故事）**：[`out/mannay_story/sketchbook_metropolis_30s.mp4`](out/mannay_story/sketchbook_metropolis_30s.mp4)
-- **Zenn 风暗色极简科普短片**：[`out/baby-zh-v/explainer.mp4`](out/baby-zh-v/explainer.mp4)（9:16 竖屏，中文普通话配音 + 自动卡拉OK字幕 + 镜头推拉）
+#### 1. 过程式角色头像生成器与阵容墙
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <b>Friends 涂鸦朋友墙 (Threeaio 风格)</b><br/>
+      <img src="assets/gifs/friends.gif" width="100%" /><br/>
+      <sub>奶油纸底 + 抖动墨线 + 4×2 种子化头像（12种发型/7种眼型/随机名字）</sub><br/>
+      <a href="templates/friends.html">▶ 网页交互模板</a> | <a href="out/friends/anim.mp4">▶ 视频成片 (MP4)</a>
+    </td>
+    <td width="50%" align="center">
+      <b>Mannay 表现主义炭笔肖像 (Mannay 风格)</b><br/>
+      <img src="assets/gifs/mannay.gif" width="100%" /><br/>
+      <sub>牛皮纸底 + 粗粝炭笔 + 6×4 表现主义头像（密集卷毛云/黑眼窝/水彩印染）</sub><br/>
+      <a href="templates/mannay.html">▶ 网页交互模板</a> | <a href="out/mannay/anim.mp4">▶ 视频成片 (MP4)</a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <b>Faces 赛博动漫脸 (Kevin Ngo 风格)</b><br/>
+      <img src="assets/gifs/faces.gif" width="100%" /><br/>
+      <sub>6×3 赛博头像、锥度脸型、护目镜/耳机/面罩、4 秒呼吸眨眼循环</sub><br/>
+      <a href="templates/faces.html">▶ 网页交互模板</a> | <a href="out/faces/anim.mp4">▶ 视频成片 (MP4)</a>
+    </td>
+    <td width="50%" align="center">
+      <b>Oddhead 大头仔家族 (Alberto 风格)</b><br/>
+      <img src="assets/gifs/oddhead.gif" width="100%" /><br/>
+      <sub>头占身高 60% + 锯齿排线头发 + 24 只丑萌搞怪大头仔</sub><br/>
+      <a href="templates/doodle.html">▶ 网页交互模板</a> | <a href="out/oddhead/anim.mp4">▶ 视频成片 (MP4)</a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <b>Weirdo 怪咖家族 (搞怪配件与转动螺旋桨)</b><br/>
+      <img src="assets/gifs/weirdo.gif" width="100%" /><br/>
+      <sub>24 只胶囊/豆子融合身体，螺旋桨帽/小苗晃动，单记忆点留白设计</sub><br/>
+      <a href="templates/doodle.html">▶ 网页交互模板</a> | <a href="out/weirdo/anim.mp4">▶ 视频成片 (MP4)</a>
+    </td>
+    <td width="50%" align="center">
+      <b>Roster 经典 28 只全阵容临摹全家福</b><br/>
+      <img src="assets/gifs/roster.gif" width="100%" /><br/>
+      <sub>人类两排 + 狗一排 + 猫一排 + 梦魇怪，原地待机呼吸与表情冒泡</sub><br/>
+      <a href="templates/replica.html">▶ 网页交互模板</a> | <a href="out/roster/anim.mp4">▶ 视频成片 (MP4)</a>
+    </td>
+  </tr>
+</table>
+
+---
+
+#### 2. 剧情动画短片与科普解说成片
+
+<table>
+  <tr>
+    <td width="60%" align="center">
+      <b>《墨水大劫案》（30s 电影感剧情短片）</b><br/>
+      <img src="assets/gifs/heist_of_ink.gif" width="100%" /><br/>
+      <sub>程序化原声配乐 + 多分镜节拍系统 + 头顶情绪气泡</sub><br/>
+      <a href="templates/cinematic_fable.html">▶ 查看 HTML 源码</a> | <a href="out/cinematic_fable/the_heist_of_ink_30s.mp4">▶ 观看 30s 完整视频 (MP4)</a>
+    </td>
+    <td width="40%" align="center">
+      <b>Zenn 风暗色科普短片（竖屏 9:16）</b><br/>
+      <img src="assets/gifs/explainer_vertical.gif" width="100%" /><br/>
+      <sub>普通话配音 + 自动卡拉OK字幕 + 镜头平滑推拉</sub><br/>
+      <a href="templates/explainer.html">▶ 查看 HTML 源码</a> | <a href="out/baby-zh-v/explainer.mp4">▶ 观看完整科普视频 (MP4)</a>
+    </td>
+  </tr>
+</table>
 
 ---
 
