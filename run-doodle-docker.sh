@@ -23,9 +23,13 @@ cd docker
 
 if [ "$USE_FORK" = true ]; then
     echo "Dùng fork: nguyengocaocuong/doodle-anim"
+    REPO_URL="https://github.com/nguyengocaocuong/doodle-anim.git"
+else
+    echo "Dùng repo gốc: feitangyuan/doodle-anim"
+    REPO_URL="https://github.com/feitangyuan/doodle-anim.git"
 fi
 
-docker build -t $IMAGE_NAME .
+docker build --build-arg REPO_URL="$REPO_URL" -t $IMAGE_NAME .
 
 cd ..
 echo "✅ Build xong"

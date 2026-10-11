@@ -20,13 +20,11 @@ RUN npx -y playwright@latest install --with-deps chromium 2>/dev/null || \
 
 WORKDIR /app
 
-# Clone repo (hoặc mount volume)
-# Nếu dùng fork của bạn:
-# git clone https://github.com/nguyengocaocuong/doodle-anim.git .
-# Nếu dùng repo gốc:
-RUN git clone --depth 1 https://github.com/feitangyuan/doodle-anim.git .
+# Clone repo — chọn qua build arg REPO_URL (mặc định: fork có đầy đủ tính năng)
+ARG REPO_URL=https://github.com/nguyengocaocuong/doodle-anim.git
+RUN git clone --depth 1 ${REPO_URL} .
 
-# Cài npm dependencies
+# Cài npm dependencies (playwright cho scripts/render-story.mjs)
 RUN npm install
 
 # Tạo server đơn giản để serve templates

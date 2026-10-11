@@ -28,6 +28,23 @@ Nếu dùng `--fork`, thêm:
 - http://localhost:8080/templates/vietnam-backgrounds.html — 🏞️ VN
 - http://localhost:8080/templates/showcase.html — demo tổng hợp
 
+## Render video từ story JSON
+
+```bash
+# Copy story JSON vào container rồi render:
+docker cp my-story.json doodle-anim-app:/tmp/my-story.json
+docker exec doodle-anim-app node /app/scripts/render-story.mjs /tmp/my-story.json /tmp/output.mp4
+
+# Copy video ra ngoài:
+docker cp doodle-anim-app:/tmp/output.mp4 ./output.mp4
+```
+
+Xem `story.sample.json` ở repo root để biết format. Chạy thử nhanh:
+```bash
+docker exec doodle-anim-app node /app/scripts/render-story.mjs /app/story.sample.json /tmp/sample.mp4
+docker cp doodle-anim-app:/tmp/sample.mp4 ./sample.mp4
+```
+
 ## Lệnh hữu ích
 
 ```bash
