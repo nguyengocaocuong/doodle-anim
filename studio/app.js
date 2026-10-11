@@ -57,9 +57,12 @@ const state = {
   playing: false,
   playSceneIdx: 0,
   playT0: 0,
+  playElapsed: null,    // seconds into current playing scene (for waypoint playback)
   dragChar: null,
   dragOffset: {x:0, y:0},
   libTab: 'humans',
+  wpMode: false,        // waypoint-add mode: plain clicks add waypoints
+  wpHit: [],            // waypoint marker hit-test list (project coords)
 };
 
 const $ = (s) => document.querySelector(s);
@@ -94,7 +97,7 @@ function newScene(over={}){
   }, over);
 }
 function newCharInstance(charKey, x, y){
-  return { id: nid('c'), char: charKey, x, y, scale: 1.0, flip: false, anim: 'idle' };
+  return { id: nid('c'), char: charKey, x, y, scale: 1.0, flip: false, anim: 'idle', waypoints: [] };
 }
 function activeSceneObj(){ return state.project.scenes[state.activeScene]; }
 function newProject(){
@@ -195,6 +198,86 @@ function hitChar(inst, px, py){
   return px>=b.x && px<=b.x+b.w && py>=b.y && py<=b.y+b.h;
 }
 
+// ---------- Waypoints ----------
+// waypoints: [{x, t}] — "be at x (project px) at scene-time t (seconds)".
+// Position at t=0 is the character's base x. Smoothstep ease in-out between keys.
+function sortWps(inst){
+  if (Array.isArray(inst.waypoints)) inst.waypoints.sort((a,b)=>a.t-b.t);
+  else inst.waypoints = [];
+}
+function waypointPos(inst, el){
+  const wps = (inst.waypoints||[]).slice().sort((a,b)=>a.t-b.t);
+  if (!wps.length || el==null) return {x: inst.x, moving:false, dx:0};
+  const kfs = [{x: inst.x, t: 0}, ...wps];
+  if (el <= kfs[0].t) return {x: kfs[0].x, moving:false, dx:0};
+  for (let i=0;i<kfs.length-1;i++){
+    const a=kfs[i], b=kfs[i+1];
+    if (el>=a.t && el<=b.t){
+      if (b.t<=a.t) return {x:b.x, moving:false, dx:0};
+      let p=(el-a.t)/(b.t-a.t);
+      p=p*p*(3-2*p); // smoothstep ease in-out
+      return {x:a.x+(b.x-a.x)*p, moving:true, dx:b.x-a.x};
+    }
+  }
+  return {x:kfs[kfs.length-1].x, moving:false, dx:0};
+}
+function addWaypoint(inst, x){
+  const sc = activeSceneObj(); if(!sc) return;
+  const {w} = projSize();
+  x = Math.round(Math.min(w, Math.max(0, x)));
+  sortWps(inst);
+  const wps = inst.waypoints;
+  const lastT = wps.length ? wps[wps.length-1].t : 0;
+  if (lastT >= sc.duration){ toast('Scene đã hết thời gian — tăng duration hoặc sửa waypoint'); return; }
+  const t = Math.min(sc.duration, +(lastT + 2).toFixed(1));
+  wps.push({x, t});
+  sortWps(inst);
+  syncWaypointList(); draw(); renderTimeline();
+  toast(`📍 Waypoint ${wps.length}: x=${x} @ ${t}s`);
+}
+function wpHitAt(px, py){
+  const R = 22; // project-px hit radius
+  return (state.wpHit||[]).find(m => Math.hypot(m.x-px, m.y-py) <= R) || null;
+}
+function drawWaypointPath(inst){
+  const pts = [{x: inst.x, t: 0}, ...(inst.waypoints||[]).slice().sort((a,b)=>a.t-b.t)];
+  const y = inst.y;
+  state.wpHit = [];
+  ctx.save();
+  // dotted path
+  ctx.strokeStyle = 'rgba(108,140,255,.75)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([8,7]);
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, y);
+  for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // start marker
+  ctx.fillStyle = '#34d399';
+  ctx.beginPath(); ctx.arc(pts[0].x, y, 9, 0, 7); ctx.fill();
+  ctx.fillStyle='#06281c'; ctx.font='700 11px sans-serif';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('S', pts[0].x, y+0.5);
+  // waypoint markers
+  pts.slice(1).forEach((p, i)=>{
+    ctx.fillStyle = '#f59e0b';
+    ctx.beginPath(); ctx.arc(p.x, y, 11, 0, 7); ctx.fill();
+    ctx.strokeStyle='#7c4a03'; ctx.lineWidth=2; ctx.stroke();
+    ctx.fillStyle='#3a2400'; ctx.font='700 12px sans-serif';
+    ctx.fillText(String(i+1), p.x, y+0.5);
+    const lbl = p.t.toFixed(1)+'s';
+    ctx.font='600 11px sans-serif';
+    const tw = ctx.measureText(lbl).width;
+    ctx.fillStyle='rgba(0,0,0,.65)';
+    ctx.fillRect(p.x-tw/2-5, y-36, tw+10, 18);
+    ctx.fillStyle='#ffd88a';
+    ctx.fillText(lbl, p.x, y-27);
+    state.wpHit.push({instId: inst.id, idx: i, x: p.x, y});
+  });
+  ctx.restore();
+}
+
 // ---------- Draw ----------
 let animT = 0;
 function drawAnimOffset(anim, t, seed){
@@ -226,16 +309,31 @@ function draw(){
     }
   }
 
+  // waypoint path overlay (edit mode, selected character)
+  state.wpHit = [];
+  if (!state.playing){
+    const sel = sc.characters.find(c=>c.id===state.selectedChar);
+    if (sel && ((sel.waypoints&&sel.waypoints.length) || state.wpMode)) drawWaypointPath(sel);
+  }
+
   // characters sorted by y
   const chars = [...sc.characters].sort((a,b)=>a.y-b.y);
   chars.forEach((inst, i)=>{
     const def = charDef(inst);
-    const b = spriteBox(inst);
-    const off = drawAnimOffset(inst.anim, animT, i*1.7);
+    // waypoint playback position (during preview)
+    let ex = inst.x, moving = false, mdx = 0;
+    if (state.playing && state.playElapsed!=null){
+      const wp = waypointPos(inst, state.playElapsed);
+      ex = wp.x; moving = wp.moving; mdx = wp.dx;
+    }
+    const effAnim = moving ? 'walk' : inst.anim;
+    const effFlip = moving ? (mdx < 0) : inst.flip;
+    const b = spriteBox(Object.assign({}, inst, {x: ex}));
+    const off = drawAnimOffset(effAnim, animT, i*1.7);
     ctx.save();
-    ctx.translate(inst.x, inst.y + off.dy);
+    ctx.translate(ex, inst.y + off.dy);
     ctx.rotate(off.rot);
-    if (inst.flip) ctx.scale(-1,1);
+    if (effFlip) ctx.scale(-1,1);
     const isSel = inst.id===state.selectedChar;
     if (def.kind==='animal'){
       ctx.font = `${b.w}px serif`;
@@ -259,7 +357,7 @@ function draw(){
     // name tag (unflipped, drawn outside the flip transform)
     if (isSel){
       ctx.save();
-      ctx.translate(inst.x, inst.y + off.dy);
+      ctx.translate(ex, inst.y + off.dy);
       ctx.font = `600 ${Math.max(20,h*0.022)}px sans-serif`;
       const tw = ctx.measureText(def.name).width;
       ctx.fillStyle='rgba(108,140,255,.92)';
@@ -289,6 +387,7 @@ function loop(ts){
     const sc = state.project.scenes[state.playSceneIdx];
     if (sc){
       const el = (ts - state.playT0)/1000;
+      state.playElapsed = el;
       if (el >= sc.duration){
         // next scene
         if (state.playSceneIdx < state.project.scenes.length-1){
@@ -313,7 +412,13 @@ function charAt(px,py){
   return chars.find(c=>hitChar(c,px,py)) || null;
 }
 canvas.addEventListener('mousedown', (e)=>{
+  if (e.button !== 0) return; // left button only (right-click is for waypoint delete)
   const p = toProj(e);
+  // waypoint add: Shift+Click or waypoint mode, with a character selected
+  if ((e.shiftKey || state.wpMode) && !state.playing){
+    const inst = getSelChar();
+    if (inst){ addWaypoint(inst, p.x); return; }
+  }
   const hit = charAt(p.x,p.y);
   if (hit){
     state.selectedChar = hit.id;
@@ -324,6 +429,21 @@ canvas.addEventListener('mousedown', (e)=>{
     state.selectedChar = null;
   }
   syncProps(); draw();
+});
+canvas.addEventListener('contextmenu', (e)=>{
+  e.preventDefault();
+  if (state.playing) return;
+  const p = toProj(e);
+  const m = wpHitAt(p.x, p.y);
+  if (m){
+    const inst = activeSceneObj()?.characters.find(c=>c.id===m.instId);
+    if (inst && inst.waypoints){
+      inst.waypoints.splice(m.idx, 1);
+      sortWps(inst);
+      syncWaypointList(); draw(); renderTimeline();
+      toast('Đã xóa waypoint');
+    }
+  }
 });
 window.addEventListener('mousemove', (e)=>{
   if (!state.dragChar) return;
@@ -401,8 +521,63 @@ function syncCharProps(){
   $('#scaleVal').textContent = Number(inst.scale).toFixed(1);
   $('#propFlip').checked = inst.flip;
   $('#propAnim').value = inst.anim;
+  syncWaypointList();
 }
 function getSelChar(){ return activeSceneObj()?.characters.find(c=>c.id===state.selectedChar); }
+
+function syncWaypointList(){
+  const inst = getSelChar();
+  const list = $('#wpList');
+  if (!list) return;
+  list.innerHTML = '';
+  const wps = inst?.waypoints || [];
+  const modeBtn = $('#btnWpMode');
+  if (modeBtn) modeBtn.classList.toggle('active', !!state.wpMode);
+  if (!wps.length){
+    list.innerHTML = '<div class="wp-empty">Chưa có waypoint — nhân vật đứng yên.</div>';
+    return;
+  }
+  wps.forEach((wp, i)=>{
+    const row = document.createElement('div');
+    row.className = 'wp-row';
+    row.innerHTML = `
+      <span class="wp-num">${i+1}</span>
+      <label>X <input type="number" data-i="${i}" data-k="x" value="${Math.round(wp.x)}" step="10"></label>
+      <label>t(s) <input type="number" data-i="${i}" data-k="t" value="${wp.t}" step="0.5" min="0"></label>
+      <button class="btn small danger" data-del="${i}" title="Xóa waypoint">×</button>`;
+    list.appendChild(row);
+  });
+  list.querySelectorAll('input').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const c2 = getSelChar(); if(!c2 || !c2.waypoints) return;
+      const i = +inp.dataset.i, k = inp.dataset.k;
+      const sc = activeSceneObj(); const {w} = projSize();
+      if (k==='x') c2.waypoints[i].x = Math.round(Math.min(w, Math.max(0, +inp.value||0)));
+      else c2.waypoints[i].t = Math.min(sc.duration, Math.max(0, +inp.value||0));
+      sortWps(c2); syncWaypointList(); draw(); renderTimeline();
+    });
+  });
+  list.querySelectorAll('[data-del]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const c2 = getSelChar(); if(!c2 || !c2.waypoints) return;
+      c2.waypoints.splice(+btn.dataset.del, 1);
+      sortWps(c2); syncWaypointList(); draw(); renderTimeline();
+      toast('Đã xóa waypoint');
+    });
+  });
+}
+$('#btnWpMode')?.addEventListener('click', ()=>{
+  state.wpMode = !state.wpMode;
+  $('#btnWpMode').classList.toggle('active', state.wpMode);
+  toast(state.wpMode ? '📍 Chế độ waypoint: click trên canvas để thêm điểm' : 'Đã tắt chế độ waypoint');
+  draw();
+});
+$('#btnWpClear')?.addEventListener('click', ()=>{
+  const inst = getSelChar(); if(!inst) return;
+  inst.waypoints = [];
+  syncWaypointList(); draw(); renderTimeline();
+  toast('Đã xóa hết waypoints');
+});
 
 $('#propBg').addEventListener('change', e=>{ activeSceneObj().background=e.target.value; draw(); renderTimeline(); });
 $('#propDur').addEventListener('input', e=>{ activeSceneObj().duration=+e.target.value; $('#durVal').textContent=e.target.value; renderTimeline(); updateTotal(); });
@@ -422,11 +597,15 @@ function renderTimeline(){
     const d = document.createElement('div');
     d.className = 'scene-block'+(i===state.activeScene?' active':'');
     const bg = BACKGROUNDS[sc.background];
+    const wpCount = sc.characters.reduce((a,c)=>a+((c.waypoints||[]).length),0);
+    const wpDots = sc.characters.flatMap(c=>(c.waypoints||[]))
+      .map(wp=>`<span class="wp-dot" style="left:${(wp.t/sc.duration*100).toFixed(1)}%"></span>`).join('');
     d.innerHTML = `
       <button class="s-del" title="Xóa scene">×</button>
       <img class="thumb" src="${bg?bg.file:''}" alt="">
       <div class="s-title">${i+1}. ${escHtml(sc.dialogue?.split('\n')[0]||'(chưa có thoại)')}</div>
-      <div class="s-meta">⏱ ${sc.duration}s • 🧍 ${sc.characters.length} • 🎵 ${sc.music}</div>
+      <div class="s-meta">⏱ ${sc.duration}s • 🧍 ${sc.characters.length}${wpCount?` • 📍 ${wpCount}`:''} • 🎵 ${sc.music}</div>
+      ${wpDots?`<div class="wp-strip" title="${wpCount} waypoints">${wpDots}</div>`:''}
       <div class="s-nav">
         <button data-a="left" title="Sang trái">◀</button>
         <button data-a="dup" title="Nhân bản">⧉</button>
@@ -494,6 +673,7 @@ function startPreview(){
 }
 function stopPreview(){
   state.playing = false;
+  state.playElapsed = null;
   state.selectedChar = null;
   $('#btnPreview').disabled = false; $('#btnStop').disabled = true;
   syncProps(); renderTimeline(); draw();
@@ -525,6 +705,15 @@ function validateProject(p){
       c.x=+c.x||0; c.y=+c.y||0; c.scale=+c.scale||1;
       c.flip=!!c.flip; c.anim=ANIMS[c.anim]?c.anim:'idle';
       if(!c.id) c.id=nid('c');
+      // sanitize waypoints: [{x, t}]
+      if(!Array.isArray(c.waypoints)) c.waypoints=[];
+      c.waypoints = c.waypoints
+        .filter(wp=>wp && isFinite(+wp.x) && isFinite(+wp.t))
+        .map(wp=>({
+          x: Math.round(Math.min(4000, Math.max(0, +wp.x))),
+          t: Math.min(s.duration, Math.max(0, +(+wp.t).toFixed(2))),
+        }));
+      c.waypoints.sort((a,b)=>a.t-b.t);
     });
     if(!s.id) s.id=nid('s');
   });
@@ -587,14 +776,25 @@ function off(a,t,sd){const s=Math.sin,T=t/1000+sd;
   if(a==='celebrate'){const p=(T*1.6)%1;return{dy:-Math.abs(Math.sin(p*Math.PI))*70,r:s(T*10)*0.12};}
   return{dy:s(T*1.8)*5,r:s(T*1.3)*0.015};}
 let si=0,t0=0,playing=false,raf=0;
-function drawScene(s,t){
+function wpPos(c,el){
+  const wps=(c.waypoints||[]).slice().sort((a,b)=>a.t-b.t);
+  if(!wps.length||el==null)return{x:c.x,m:false,dx:0};
+  const k=[{x:c.x,t:0}].concat(wps);
+  if(el<=k[0].t)return{x:k[0].x,m:false,dx:0};
+  for(let i=0;i<k.length-1;i++){const a=k[i],b=k[i+1];
+    if(el>=a.t&&el<=b.t){if(b.t<=a.t)return{x:b.x,m:false,dx:0};
+      let p=(el-a.t)/(b.t-a.t);p=p*p*(3-2*p);
+      return{x:a.x+(b.x-a.x)*p,m:true,dx:b.x-a.x};}}
+  return{x:k[k.length-1].x,m:false,dx:0};}
+function drawScene(s,t,el){
   const bg=BG[s.background],im=bg&&img(bg.file);
   if(im&&im.complete&&im.naturalWidth){const k=Math.max(W/im.naturalWidth,H/im.naturalHeight);
     x.drawImage(im,(W-im.naturalWidth*k)/2,(H-im.naturalHeight*k)/2,im.naturalWidth*k,im.naturalHeight*k);}
   else{x.fillStyle='#1a1d26';x.fillRect(0,0,W,H);}
   [...s.characters].sort((a,b)=>a.y-b.y).forEach((c,i)=>{
-    const o=off(c.anim,t,i*1.7);x.save();x.translate(c.x,c.y+o.dy);x.rotate(o.r);
-    if(c.flip)x.scale(-1,1);
+    const wp=wpPos(c,el),ea=wp.m?'walk':c.anim;
+    const o=off(ea,t,i*1.7);x.save();x.translate(wp.x,c.y+o.dy);x.rotate(o.r);
+    if(wp.m?wp.dx<0:c.flip)x.scale(-1,1);
     if(c.char.startsWith('animal:')){const e=AN[c.char.slice(7)];x.font=(150*c.scale)+'px serif';
       x.textAlign='center';x.textBaseline='bottom';x.fillText(e?e.emoji:'❓',0,6);}
     else{const f=HU[c.char]&&HU[c.char].file,ii=f&&img(f);
@@ -608,12 +808,12 @@ function tick(t){
   const s=P.scenes[si],el=(t-t0)/1000;
   document.getElementById('fill').style.width=(100*(si+el/s.duration)/P.scenes.length)+'%';
   if(el>=s.duration){si++;if(si>=P.scenes.length){stop();return;}t0=t;}
-  drawScene(P.scenes[si],t);raf=requestAnimationFrame(tick);
+  drawScene(P.scenes[si],t,el);raf=requestAnimationFrame(tick);
 }
 function stop(){playing=false;cancelAnimationFrame(raf);document.getElementById('play').textContent='▶ Phát lại';si=0;}
 document.getElementById('play').onclick=()=>{if(playing)return;playing=true;si=0;t0=performance.now();
   document.getElementById('play').textContent='⏸ Đang phát';raf=requestAnimationFrame(tick);};
-drawScene(P.scenes[0],0);
+drawScene(P.scenes[0],0,0);
 <\/script></body></html>`;
   const blob = new Blob([html], {type:'text/html'});
   const a = document.createElement('a');
@@ -636,7 +836,8 @@ $('#btnRender').addEventListener('click', ()=>{
       characters: s.characters.map(c=>{
         const d = charDef(c);
         return {name:d.name, sprite:d.file||d.emoji, kind:d.kind,
-                x:c.x, y:c.y, scale:c.scale, flip:c.flip, anim:c.anim};
+                x:c.x, y:c.y, scale:c.scale, flip:c.flip, anim:c.anim,
+                waypoints:(c.waypoints||[]).map(wp=>({x:wp.x, t:wp.t}))};
       }),
     })),
   };
@@ -669,9 +870,11 @@ function seedDemo(){
   const s1 = newScene({background:'bg-park', duration:8, music:'happy',
     dialogue:'An, Bình, Chi, Dũng — bốn người bạn thân!'});
   s1.characters.push(
-    Object.assign(newCharInstance('an', 500, 880), {anim:'walk'}),
+    Object.assign(newCharInstance('an', 500, 880), {anim:'walk',
+      waypoints:[{x:900,t:2},{x:500,t:4},{x:900,t:6}]}),
     Object.assign(newCharInstance('binh', 800, 900), {anim:'idle'}),
-    Object.assign(newCharInstance('chi', 1100, 880), {anim:'walk', flip:true}),
+    Object.assign(newCharInstance('chi', 1100, 880), {anim:'walk', flip:true,
+      waypoints:[{x:700,t:2.5},{x:1400,t:5}]}),
     Object.assign(newCharInstance('dung', 1400, 900), {anim:'idle'}),
     Object.assign(newCharInstance('animal:dog', 950, 950), {scale:0.8, anim:'walk'}),
   );

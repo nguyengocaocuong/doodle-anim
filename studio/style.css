@@ -184,6 +184,26 @@ main{flex:1; display:flex; min-height:0}
 .scene-block .s-nav button:hover{color:var(--text); border-color:var(--accent)}
 #btnAddScene{margin-left:auto}
 
+/* ---------- WAYPOINTS ---------- */
+.wp-section{margin-top:10px; border-top:1px solid var(--border); padding-top:10px}
+.wp-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:6px}
+.wp-head strong{font-size:13px}
+#btnWpMode.active{background:var(--accent); border-color:var(--accent); color:#fff}
+.wp-hint{font-size:11px; color:var(--muted); margin-bottom:8px; line-height:1.5}
+.wp-empty{font-size:12px; color:var(--muted); padding:8px 0}
+.wp-row{display:flex; align-items:center; gap:6px; margin-bottom:6px}
+.wp-num{
+  background:#f59e0b; color:#3a2400; font-weight:700;
+  border-radius:50%; width:22px; height:22px; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center; font-size:12px;
+}
+.wp-row label{flex:1; font-size:11px; color:var(--muted); margin:0}
+.wp-row input{width:100%}
+.wp-row .btn{flex-shrink:0}
+#btnWpClear{width:100%; margin-top:4px}
+.wp-strip{position:relative; height:8px; background:#101218; border-radius:4px; margin-top:6px}
+.wp-dot{position:absolute; top:1px; width:6px; height:6px; border-radius:50%; background:#f59e0b; transform:translateX(-50%)}
+
 /* ---------- TOAST ---------- */
 #toast{
   position:fixed; bottom:200px; left:50%; transform:translateX(-50%) translateY(20px);

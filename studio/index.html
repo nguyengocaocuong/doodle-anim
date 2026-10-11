@@ -42,7 +42,7 @@
   <section id="stageWrap">
     <div id="stageBar">
       <span id="sceneLabel">Scene 1</span>
-      <span id="canvasHint">Kéo nhân vật từ thư viện vào • Kéo để di chuyển • Click để chọn • Del để xóa</span>
+      <span id="canvasHint">Kéo nhân vật từ thư viện vào • Kéo để di chuyển • Click để chọn • Del để xóa • Shift+Click: thêm waypoint</span>
     </div>
     <div id="stageScroll">
       <canvas id="stage"></canvas>
@@ -94,6 +94,15 @@
           <option value="celebrate">Ăn mừng</option>
         </select>
       </label>
+      <div class="wp-section">
+        <div class="wp-head">
+          <strong>📍 Waypoints</strong>
+          <button id="btnWpMode" class="btn small" title="Bật: click trên canvas để thêm waypoint">📍 Thêm</button>
+        </div>
+        <div class="wp-hint">Shift+Click trên canvas để thêm điểm • Chuột phải vào điểm để xóa</div>
+        <div id="wpList"></div>
+        <button id="btnWpClear" class="btn small danger">Xóa hết waypoints</button>
+      </div>
       <button id="btnDelChar" class="btn danger small">🗑 Xóa nhân vật</button>
     </div>
 
