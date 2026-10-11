@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🎨 Doodle Studio — Visual Story Builder</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header id="toolbar">
+  <div class="brand">🎨 <strong>Doodle Studio</strong></div>
+  <input id="projectTitle" type="text" value="Câu chuyện của tôi" title="Tên dự án">
+  <select id="projectSize" title="Kích thước video">
+    <option value="1920x1080">16:9 — YouTube (1920×1080)</option>
+    <option value="1080x1920">9:16 — TikTok (1080×1920)</option>
+    <option value="1280x720">16:9 — HD (1280×720)</option>
+  </select>
+  <div class="spacer"></div>
+  <button id="btnPreview" class="btn primary" title="Xem thử toàn bộ">▶ Preview</button>
+  <button id="btnStop" class="btn" title="Dừng preview" disabled>⏹</button>
+  <button id="btnExportHTML" class="btn" title="Xuất file HTML chạy độc lập">🌐 HTML</button>
+  <button id="btnExportJSON" class="btn" title="Lưu dự án ra JSON">💾 JSON</button>
+  <button id="btnImportJSON" class="btn" title="Mở dự án từ JSON">📂 Import</button>
+  <button id="btnRender" class="btn" title="Tạo render job cho MP4">🎬 MP4</button>
+  <button id="btnNew" class="btn danger" title="Dự án mới">🗑 Mới</button>
+</header>
+
+<main>
+  <!-- LIBRARY -->
+  <aside id="library">
+    <div class="tabs">
+      <button class="tab active" data-tab="humans">🧑 Nhân vật</button>
+      <button class="tab" data-tab="animals">🐾 Động vật</button>
+      <button class="tab" data-tab="bgs">🏞️ Bối cảnh</button>
+    </div>
+    <div class="lib-hint">Kéo thả vào canvas để thêm</div>
+    <div id="libGrid" class="lib-grid"></div>
+  </aside>
+
+  <!-- CANVAS -->
+  <section id="stageWrap">
+    <div id="stageBar">
+      <span id="sceneLabel">Scene 1</span>
+      <span id="canvasHint">Kéo nhân vật từ thư viện vào • Kéo để di chuyển • Click để chọn • Del để xóa</span>
+    </div>
+    <div id="stageScroll">
+      <canvas id="stage"></canvas>
+    </div>
+    <div id="subtitleBar"></div>
+  </section>
+
+  <!-- PROPERTIES -->
+  <aside id="props">
+    <h3>⚙️ Thuộc tính</h3>
+
+    <div class="prop-group">
+      <h4>🎬 Scene hiện tại</h4>
+      <label>Bối cảnh
+        <select id="propBg"></select>
+      </label>
+      <label>Thời lượng: <span id="durVal">10</span>s
+        <input id="propDur" type="range" min="3" max="30" value="10">
+      </label>
+      <label>Nhạc nền
+        <select id="propMusic">
+          <option value="none">Không nhạc</option>
+          <option value="happy">Vui tươi</option>
+          <option value="sad">Buồn</option>
+          <option value="adventure">Phiêu lưu</option>
+          <option value="tense">Hồi hộp</option>
+          <option value="romantic">Lãng mạn</option>
+        </select>
+      </label>
+      <label>Lời thoại / phụ đề
+        <textarea id="propDialogue" rows="3" placeholder="Nhập lời thoại hiển thị dưới video..."></textarea>
+      </label>
+    </div>
+
+    <div class="prop-group" id="charProps" style="display:none">
+      <h4>🧍 Nhân vật đã chọn</h4>
+      <div id="charPropName" class="char-name"></div>
+      <label>Vị trí X <input id="propX" type="number" step="10"></label>
+      <label>Vị trí Y <input id="propY" type="number" step="10"></label>
+      <label>Tỉ lệ: <span id="scaleVal">1.0</span>
+        <input id="propScale" type="range" min="0.3" max="2.5" step="0.1" value="1">
+      </label>
+      <label><input id="propFlip" type="checkbox"> Lật ngang (quay mặt)</label>
+      <label>Animation
+        <select id="propAnim">
+          <option value="idle">Đứng yên (thở nhẹ)</option>
+          <option value="walk">Đi bộ</option>
+          <option value="jump">Nhảy</option>
+          <option value="celebrate">Ăn mừng</option>
+        </select>
+      </label>
+      <button id="btnDelChar" class="btn danger small">🗑 Xóa nhân vật</button>
+    </div>
+
+    <div class="prop-group">
+      <h4>📐 Scene</h4>
+      <div class="row">
+        <button id="btnDupScene" class="btn small">⧉ Nhân bản</button>
+        <button id="btnDelScene" class="btn danger small">🗑 Xóa scene</button>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<!-- TIMELINE -->
+<footer id="timelineWrap">
+  <div id="timelineHead">
+    <strong>🎞️ Timeline</strong>
+    <span id="totalDur">Tổng: 10s</span>
+    <button id="btnAddScene" class="btn primary small">＋ Thêm scene</button>
+  </div>
+  <div id="timeline"></div>
+</footer>
+
+<div id="toast"></div>
+<input type="file" id="fileImport" accept=".json,application/json" hidden>
+
+<script src="app.js"></script>
+</body>
+</html>
