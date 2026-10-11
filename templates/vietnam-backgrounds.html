@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>doodle-anim — Backgrounds Việt Nam</title>
+<style>
+  html,body{margin:0;padding:0;background:#1a1a1a;height:100%;overflow:hidden}
+  canvas{display:block;margin:0 auto}
+</style>
+</head>
+<body>
+<canvas id="cv" width="1600" height="900"></canvas>
+<script>
+'use strict';
+/* ============================================================
+ * doodle-anim — vietnam-backgrounds.html
+ * 5 backgrounds Việt Nam vẽ tay procedural, có animation:
+ * 1. Ruộng bậc thang Sapa   2. Chợ nổi Mekong
+ * 3. Phố cổ Hội An          4. Biển Nha Trang
+ * 5. Rừng Tây Nguyên + nhà rông
+ * Mỗi background hiện ~6s, tự chuyển cảnh.
+ * ============================================================ */
+
+function mulberry32(seed){
+  let a = seed >>> 0;
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const INK = '#2b2620';
+function wob(pts, seed, mag){
+  const r = mulberry32(seed); mag = mag || 2;
+  return pts.map(p => [p[0] + (r()*2-1)*mag, p[1] + (r()*2-1)*mag]);
+}
+function stroke(ctx, pts, o){
+  o = o || {};
+  const p = wob(pts, o.seed || 7, o.mag == null ? 2 : o.mag);
+  ctx.save();
+  ctx.strokeStyle = o.color || INK;
+  ctx.lineWidth = o.width || 3;
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  p.forEach((pt,i)=>{ i?ctx.lineTo(pt[0],pt[1]):ctx.moveTo(pt[0],pt[1]); });
+  if(o.close) ctx.closePath();
+  if(o.fill){ ctx.fillStyle = o.fill; ctx.globalAlpha = o.alpha != null ? o.alpha : 0.95; ctx.fill(); ctx.globalAlpha = 1; }
+  if(o.fillClose){ ctx.closePath(); ctx.fillStyle = o.fill; ctx.globalAlpha = o.alpha != null ? o.alpha : 0.95; ctx.fill(); ctx.globalAlpha = 1; }
+  else ctx.stroke();
+  ctx.restore();
+}
+function ell(cx, cy, rx, ry, n){
+  n = n || 16;
+  const pts = [];
+  for(let i=0;i<n;i++){
+    const a = (i/n)*Math.PI*2;
+    pts.push([cx + Math.cos(a)*rx, cy + Math.sin(a)*ry]);
+  }
+  return pts;
+}
+function cloud(ctx, t, x, y, s, seed){  const dx = Math.sin(t*0.2+seed)*14;
+  ctx.save(); ctx.translate(x+dx, y); ctx.scale(s, s*0.7);
+  [[-30,0,26],[0,-8,32],[30,0,26],[0,8,30]].forEach((c,i)=>{
+    ctx.beginPath(); ctx.arc(c[0], c[1], c[2], 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fill();
+  });
+  ctx.restore();
+}
+function titleBar(ctx, W, H, text){
+  ctx.save();
+  ctx.fillStyle = 'rgba(20,16,12,0.72)';
+  ctx.fillRect(0, H-92, W, 92);
+  ctx.fillStyle = '#f5efdd'; ctx.font = 'bold 40px sans-serif';
+  ctx.textAlign = 'center'; ctx.fillText(text, W/2, H-34);
+  ctx.restore();
+}
+
+/* ---------- 1. RUỘNG BẬC THANG SAPA ---------- */
+function bgSapa(ctx, t, W, H){
+  // trời
+  const g = ctx.createLinearGradient(0,0,0,H*0.55);
+  g.addColorStop(0,'#a8d0e8'); g.addColorStop(1,'#e8f2e0');
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H*0.55);
+  cloud(ctx, t, W*0.2, 110, 1.4, 1); cloud(ctx, t, W*0.7, 170, 1.1, 2);
+  // núi xa
+  ctx.fillStyle = '#9db8a4';
+  [[0,380,260,200,520,300,780,180,1040,320,1300,220,1600,340]].forEach(()=>{});
+  stroke(ctx, [[-20,420],[240,220],[520,360],[800,200],[1080,380],[1340,240],[1620,400],[1620,500],[-20,500]],
+    {seed:11, fill:'#8aa892', fillClose:true, width:2.5});
+  stroke(ctx, [[-20,470],[300,330],[620,440],[940,320],[1260,450],[1620,350],[1620,560],[-20,560]],
+    {seed:12, fill:'#a4c19a', fillClose:true, width:2.5});
+  // ruộng bậc thang: 7 tầng
+  for(let i=0;i<7;i++){
+    const y0 = 470 + i*62;
+    const green = ['#7fb069','#8bc34a','#9ccc65','#aed581','#c0ca33','#d4e157','#e6ee9c'][i];
+    const pts = [];
+    for(let x=-20;x<=1620;x+=80){
+      const r = mulberry32(100+i*7+Math.floor(x/80));
+      pts.push([x, y0 + Math.sin(x*0.008+i)*14 + (r()-0.5)*8]);
+    }
+    pts.push([1620,900],[-20,900]);
+    stroke(ctx, pts, {seed:20+i, fill:green, fillClose:true, width:3});
+    // mặt nước phản chiếu trên 2 tầng đầu
+    if(i<2){
+      ctx.save(); ctx.globalAlpha = 0.35; ctx.fillStyle = '#cfe8f5';
+      for(let x=60;x<1560;x+=160){
+        const r = mulberry32(300+i*31+x);
+        ctx.fillRect(x+r()*60, y0+18, 60+r()*40, 10);
+      }
+      ctx.restore();
+    }
+    // lúa: nét sổ
+    if(i>=2){
+      ctx.save(); ctx.strokeStyle = '#5c8a3c'; ctx.lineWidth = 1.6;
+      const r = mulberry32(400+i);
+      for(let k=0;k<40;k++){
+        const x = r()*1600, yy = y0+12+r()*30;
+        const sway = Math.sin(t*1.5+x*0.01)*3;
+        ctx.beginPath(); ctx.moveTo(x,yy); ctx.lineTo(x+sway,yy-12); ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+  // người dân tộc gùi
+  const px = 300 + Math.sin(t*0.3)*40;
+  drawFarmer(ctx, px, 700, 1.1, 1);
+  titleBar(ctx, W, H, '⛰ RUỘNG BẬC THANG — SAPA');
+}
+function drawFarmer(ctx, x, y, s, dir){
+  ctx.save(); ctx.translate(x,y); ctx.scale(s*dir,s);
+  ctx.strokeStyle = INK; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(-8,-60); ctx.lineTo(-10,0); ctx.moveTo(8,-60); ctx.lineTo(10,0); ctx.stroke();
+  stroke(ctx, [[-14,-100],[14,-100],[12,-60],[-12,-60]], {seed:51, fill:'#b03a48', fillClose:true, width:2.5});
+  ctx.beginPath(); ctx.arc(0,-116,13,0,Math.PI*2); ctx.fillStyle='#e8c39e'; ctx.fill(); ctx.stroke();
+  // khăn thổ cẩm
+  stroke(ctx, [[-13,-122],[13,-122],[10,-132],[-10,-132]], {seed:52, fill:'#3a5a8c', fillClose:true, width:2});
+  // gùi sau lưng
+  stroke(ctx, [[-16,-96],[-30,-70],[-24,-44],[-10,-60]], {seed:53, fill:'#a08050', fillClose:true, width:2.5});
+  ctx.restore();
+}
+
+/* ---------- 2. CHỢ NỔI MEKONG ---------- */
+function bgMekong(ctx, t, W, H){
+  const g = ctx.createLinearGradient(0,0,0,H*0.5);
+  g.addColorStop(0,'#bfe3f0'); g.addColorStop(1,'#eaf6ee');
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H*0.5);
+  cloud(ctx, t, W*0.3, 100, 1.3, 3); cloud(ctx, t, W*0.8, 150, 1.0, 4);
+  // dừa nước xa
+  ctx.fillStyle = '#7ba05b';
+  for(let i=0;i<9;i++){
+    const r = mulberry32(600+i);
+    const x = r()*W, y = 380+r()*30;
+    ctx.save(); ctx.translate(x,y);
+    for(let k=0;k<5;k++){
+      ctx.save(); ctx.rotate(-0.9+k*0.45);
+      ctx.fillRect(-3,-46,6,48); ctx.restore();
+    }
+    ctx.restore();
+  }
+  // sông
+  const wg = ctx.createLinearGradient(0,430,0,H);
+  wg.addColorStop(0,'#8fc3d4'); wg.addColorStop(1,'#5d94a8');
+  ctx.fillStyle = wg; ctx.fillRect(0,430,W,H-430);
+  // sóng lăn tăn
+  ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2;
+  for(let i=0;i<24;i++){
+    const r = mulberry32(700+i);
+    const x = r()*W, y = 470+r()*(H-500);
+    const off = Math.sin(t*2+x*0.02)*8;
+    ctx.beginPath(); ctx.moveTo(x-24+off,y); ctx.quadraticCurveTo(x+off,y-6,x+24+off,y); ctx.stroke();
+  }
+  ctx.restore();
+  // 3 ghe chở trái cây
+  drawBoat(ctx, t, W*0.18+Math.sin(t*0.5)*14, 640, 1.15, '#8a5a2e', ['#e05252','#f2a541','#7fb069']);
+  drawBoat(ctx, t, W*0.52-Math.sin(t*0.4)*18, 720, 1.35, '#6e4a24', ['#f2d541','#e05252']);
+  drawBoat(ctx, t, W*0.82+Math.sin(t*0.6)*10, 600, 0.95, '#8a5a2e', ['#9ccc65']);
+  // cây bẹo (cột treo hàng)
+  [0.18,0.52,0.82].forEach((fx,i)=>{
+    const bx = W*fx + (i===1?-Math.sin(t*0.4)*18:Math.sin(t*0.5)*14*(i?-1:1));
+    stroke(ctx, [[bx,640-120],[bx,640-220]], {seed:80+i, width:4, color:'#6e4a24'});
+    const goods = ['🍍','🍉','🥥'][i];
+    ctx.font = '34px sans-serif'; ctx.fillText(goods, bx-14, 640-230);
+  });
+  titleBar(ctx, W, H, '🛶 CHỢ NỔI — MEKONG');
+}
+function drawBoat(ctx, t, x, y, s, wood, fruits){
+  ctx.save(); ctx.translate(x,y); ctx.scale(s,s);
+  ctx.rotate(Math.sin(t*1.2)*0.02);
+  stroke(ctx, [[-90,0],[-60,26],[60,26],[90,0],[60,-6],[-60,-6]],
+    {seed:71, fill:wood, fillClose:true, width:3});
+  // trái cây chất đống
+  fruits.forEach((c,i)=>{
+    const r = mulberry32(72+i);
+    for(let k=0;k<4;k++)
+      { ctx.beginPath(); ctx.arc(-40+i*36+(r()-0.5)*10, -18-(r()*14), 9, 0, Math.PI*2); ctx.fillStyle=c; ctx.fill(); }
+  });
+  // người chèo
+  ctx.save(); ctx.translate(52,-6);
+  ctx.strokeStyle = INK; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(-6,-44); ctx.lineTo(-8,0); ctx.moveTo(6,-44); ctx.lineTo(8,0); ctx.stroke();
+  stroke(ctx, [[-11,-72],[11,-72],[9,-44],[-9,-44]], {seed:73, fill:'#4a7fb5', fillClose:true, width:2.5});
+  ctx.beginPath(); ctx.arc(0,-84,10,0,Math.PI*2); ctx.fillStyle='#e8c39e'; ctx.fill(); ctx.stroke();
+  // nón lá
+  stroke(ctx, [[-16,-90],[16,-90],[0,-104]], {seed:74, fill:'#e8d8a8', fillClose:true, width:2});
+  // tay chèo
+  const row = Math.sin(t*1.8)*10;
+  stroke(ctx, [[8,-60],[40+row,-10]], {seed:75, width:4, color:'#6e4a24'});
+  ctx.restore();
+  ctx.restore();
+}
+
+/* ---------- 3. PHỐ CỔ HỘI AN (cải tiến) ---------- */
+function bgHoiAn(ctx, t, W, H){
+  // hoàng hôn tím cam
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#3a2e5a'); g.addColorStop(0.5,'#8a4a6e'); g.addColorStop(0.75,'#e08a5a'); g.addColorStop(1,'#2b2038');
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+  // mặt trời lặn
+  ctx.save(); ctx.globalAlpha = 0.9;
+  ctx.beginPath(); ctx.arc(W*0.5, H*0.62, 60, 0, Math.PI*2);
+  ctx.fillStyle = '#f7d774'; ctx.fill(); ctx.restore();
+  // dãy nhà cổ silhouette 2 lớp
+  drawRowHouses(ctx, H*0.62, 1.25, '#241d33', 91);
+  drawRowHouses(ctx, H*0.72, 1.0, '#312842', 92);
+  // đèn lồng: 3 dây, đung đưa
+  for(let row=0;row<3;row++){
+    const y0 = 180+row*90;
+    stroke(ctx, [[-20,y0],[W+20,y0-20+row*10]], {seed:100+row, width:2.5, color:'#1c1626'});
+    for(let i=0;i<12;i++){
+      const x = 60+i*130;
+      const sway = Math.sin(t*1.4+i+row*2)*10;
+      const y = y0 + (x/W)*(-20+row*10);
+      stroke(ctx, [[x,y],[x+sway*0.3,y+26]], {seed:110+row*20+i, width:1.8, color:'#1c1626'});
+      drawLantern(ctx, x+sway*0.3, y+44, 1+((i+row)%3)*0.15, 120+row*20+i);
+    }
+  }
+  // mặt đất + phản chiếu
+  ctx.fillStyle = '#1e1830'; ctx.fillRect(0,H*0.8,W,H*0.2);
+  ctx.save(); ctx.globalAlpha = 0.25;
+  for(let i=0;i<12;i++){
+    const x = 60+i*130;
+    ctx.fillStyle = '#f7ba3e';
+    ctx.fillRect(x-8, H*0.82, 16, 40+((i*37)%30));
+  }
+  ctx.restore();
+  titleBar(ctx, W, H, '🏮 PHỐ CỔ — HỘI AN');
+}
+function drawRowHouses(ctx, baseY, s, color, seed){
+  const r = mulberry32(seed);
+  let x = -40;
+  ctx.save();
+  while(x < 1700){
+    const w = 120+r()*90, h = (90+r()*70)*s;
+    ctx.fillStyle = color;
+    ctx.fillRect(x, baseY-h, w, h);
+    // mái ngói
+    ctx.beginPath();
+    ctx.moveTo(x-14, baseY-h); ctx.lineTo(x+w/2, baseY-h-34*s); ctx.lineTo(x+w+14, baseY-h);
+    ctx.closePath(); ctx.fill();
+    // cửa sổ sáng
+    if(r()>0.4){
+      ctx.fillStyle = 'rgba(247,186,62,0.75)';
+      ctx.fillRect(x+w*0.3, baseY-h*0.6, w*0.18, h*0.3);
+    }
+    x += w + 8;
+  }
+  ctx.restore();
+}
+function drawLantern(ctx, x, y, s, seed){
+  ctx.save(); ctx.translate(x,y); ctx.scale(s,s);
+  const glow = 0.75 + Math.sin(seed)*0.2;
+  const gr = ctx.createRadialGradient(0,0,4,0,0,34);
+  gr.addColorStop(0,`rgba(247,186,62,${glow})`); gr.addColorStop(1,'rgba(247,186,62,0)');
+  ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(0,0,34,0,Math.PI*2); ctx.fill();
+  stroke(ctx, ell(0, 0, 16, 20, 14), {seed:seed, fill:'#f76a3e', fillClose:true, width:2});
+  for(let i=-1;i<=1;i++)
+    stroke(ctx, [[i*9,-16],[i*11,16]], {seed:seed+1+i, width:1.4, color:'#c94a2e'});
+  stroke(ctx, [[-5,-20],[5,-20]], {seed:seed+4, width:3, color:'#8a5a2e'});
+  stroke(ctx, [[-4,20],[4,20]], {seed:seed+5, width:3, color:'#8a5a2e'});
+  ctx.restore();
+}
+
+/* ---------- 4. BIỂN NHA TRANG ---------- */
+function bgNhaTrang(ctx, t, W, H){
+  const g = ctx.createLinearGradient(0,0,0,H*0.55);
+  g.addColorStop(0,'#7ec8e8'); g.addColorStop(1,'#d8f0f8');
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H*0.55);
+  cloud(ctx, t, W*0.25, 120, 1.5, 5); cloud(ctx, t, W*0.75, 90, 1.2, 6);
+  // mặt trời
+  ctx.save();
+  ctx.beginPath(); ctx.arc(W*0.82, 130, 46, 0, Math.PI*2);
+  ctx.fillStyle = '#ffe28a'; ctx.fill(); ctx.restore();
+  // đảo xa
+  stroke(ctx, [[-20,470],[300,380],[640,460],[900,400],[1200,470],[1620,420],[1620,500],[-20,500]],
+    {seed:130, fill:'#7ba889', fillClose:true, width:2.5});
+  // biển 3 lớp sóng
+  const sea = ctx.createLinearGradient(0,470,0,H);
+  sea.addColorStop(0,'#4fb3d9'); sea.addColorStop(0.5,'#2e8fb8'); sea.addColorStop(1,'#1e6e94');
+  ctx.fillStyle = sea; ctx.fillRect(0,470,W,H-470);
+  for(let L=0;L<3;L++){
+    ctx.save(); ctx.strokeStyle = `rgba(255,255,255,${0.55-L*0.13})`; ctx.lineWidth = 3-L*0.5;
+    const y0 = 540+L*110;
+    ctx.beginPath();
+    for(let x=-20;x<=1620;x+=20){
+      const y = y0 + Math.sin(x*0.02 + t*(2+L*0.7) + L*2)*10;
+      x===-20?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    }
+    ctx.stroke(); ctx.restore();
+  }
+  // thuyền thúng
+  const bx = W*0.3 + Math.sin(t*0.6)*30, by = 640 + Math.sin(t*1.1)*8;
+  ctx.save(); ctx.translate(bx,by); ctx.rotate(Math.sin(t*1.1)*0.05);
+  stroke(ctx, ell(0, 0, 70, 26, 18), {seed:140, fill:'#a08050', fillClose:true, width:3});
+  stroke(ctx, ell(0, -4, 52, 16, 16), {seed:141, fill:'#8a6a3e', fillClose:true, alpha:0.8, width:2});
+  // ngư dân
+  ctx.strokeStyle = INK; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(-8,-40); ctx.lineTo(-10,-8); ctx.moveTo(8,-40); ctx.lineTo(10,-8); ctx.stroke();
+  stroke(ctx, [[-12,-62],[12,-62],[10,-40],[-10,-40]], {seed:142, fill:'#3a6ea5', fillClose:true, width:2.5});
+  ctx.beginPath(); ctx.arc(0,-74,10,0,Math.PI*2); ctx.fillStyle='#e8c39e'; ctx.fill(); ctx.stroke();
+  stroke(ctx, [[-16,-80],[16,-80],[0,-94]], {seed:143, fill:'#e8d8a8', fillClose:true, width:2});
+  ctx.restore();
+  // bãi cát
+  ctx.fillStyle = '#f0e2b8'; ctx.fillRect(0,H-120,W,120);
+  // dừa
+  for(let i=0;i<3;i++){
+    const x = 120+i*90;
+    stroke(ctx, [[x,H-120],[x+10,H-220]], {seed:150+i, width:9, color:'#7a5c3e'});
+    for(let k=0;k<6;k++){
+      ctx.save(); ctx.translate(x+10,H-220); ctx.rotate(-1.1+k*0.44+Math.sin(t+k)*0.05);
+      ctx.fillStyle = '#4e8f4e'; ctx.fillRect(-4,-52,8,54); ctx.restore();
+    }
+  }
+  titleBar(ctx, W, H, '🌊 BIỂN — NHA TRANG');
+}
+
+/* ---------- 5. RỪNG TÂY NGUYÊN + NHÀ RÔNG ---------- */
+function bgTayNguyen(ctx, t, W, H){
+  // trời rừng
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#cfe8b8'); g.addColorStop(0.5,'#a8d098'); g.addColorStop(1,'#3e5c38');
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+  // cây cổ thụ 2 bên
+  drawBigTree(ctx, t, 140, H, 1.3, 160);
+  drawBigTree(ctx, t, W-140, H, 1.5, 161);
+  // nhà rông giữa
+  const hx = W/2, hy = H*0.78;
+  ctx.save();
+  // sàn nhà
+  ctx.fillStyle = '#6e4a2e'; ctx.fillRect(hx-190, hy-40, 380, 26);
+  for(let i=0;i<8;i++) stroke(ctx, [[hx-170+i*48,hy-40],[hx-170+i*48,hy+30]], {seed:170+i, width:7, color:'#5c3c24'});
+  // thân nhà
+  stroke(ctx, [[hx-150,hy-40],[hx+150,hy-40],[hx+130,hy-190],[hx-130,hy-190]],
+    {seed:171, fill:'#8a5c34', fillClose:true, width:3});
+  // mái cao vút đặc trưng
+  stroke(ctx, [[hx-190,hy-190],[hx,hy-430],[hx+190,hy-190]],
+    {seed:172, fill:'#5c3c24', fillClose:true, width:3.5});
+  stroke(ctx, [[hx,hy-430],[hx,hy-470]], {seed:173, width:6, color:'#5c3c24'});
+  // cửa + cửa sổ
+  ctx.fillStyle = '#2e1f12'; ctx.fillRect(hx-30, hy-120, 60, 80);
+  ctx.fillStyle = 'rgba(247,186,62,0.6)'; ctx.fillRect(hx-110, hy-160, 44, 40);
+  // cầu thang
+  stroke(ctx, [[hx+60,hy+30],[hx+130,hy+120]], {seed:174, width:8, color:'#6e4a2e'});
+  // hoa văn thổ cẩm trên mái
+  ctx.save(); ctx.strokeStyle = '#e8d8a8'; ctx.lineWidth = 2;
+  for(let i=0;i<5;i++){
+    const yy = hy-210-i*36;
+    ctx.beginPath(); ctx.moveTo(hx-120+i*8,yy);
+    for(let x=0;x<8;x++) ctx.lineTo(hx-120+i*8+x*30, yy+((x%2)?-8:8));
+    ctx.stroke();
+  }
+  ctx.restore();
+  ctx.restore();
+  // đom đóm bay
+  ctx.save();
+  const r = mulberry32(180);
+  for(let i=0;i<26;i++){
+    const fx = r()*W, fy = H*0.3+r()*H*0.5;
+    const mx = fx+Math.sin(t*0.8+i)*40, my = fy+Math.cos(t*0.6+i*2)*30;
+    const gl = 0.4+0.6*Math.abs(Math.sin(t*2+i));
+    ctx.fillStyle = `rgba(255,240,150,${gl})`;
+    ctx.beginPath(); ctx.arc(mx,my,3.2,0,Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+  // mặt đất
+  ctx.fillStyle = '#2e442e'; ctx.fillRect(0,H-60,W,60);
+  titleBar(ctx, W, H, '🌲 RỪNG TÂY NGUYÊN — NHÀ RÔNG');
+}
+function drawBigTree(ctx, t, x, baseY, s, seed){
+  ctx.save(); ctx.translate(x,baseY); ctx.scale(s,s);
+  stroke(ctx, [[0,0],[-8,-120],[4,-220]], {seed:seed, width:34, color:'#5c4228'});
+  stroke(ctx, [[-4,-140],[-70,-190]], {seed:seed+1, width:16, color:'#5c4228'});
+  stroke(ctx, [[2,-160],[70,-210]], {seed:seed+2, width:16, color:'#5c4228'});
+  // tán lá đung đưa
+  const sway = Math.sin(t*1.1)*6;
+  [[-70,-210,60],[70,-230,66],[0,-270,80]].forEach((c,i)=>{
+    ctx.save(); ctx.translate(c[0]+sway*(i+1)*0.4, c[1]);
+    ctx.fillStyle = i%2 ? '#3e6e34' : '#4e8f4e';
+    ctx.beginPath(); ctx.arc(0,0,c[2],0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  });
+  ctx.restore();
+}
+
+/* ============================================================
+ * DISPATCHER — mỗi background 6s
+ * ============================================================ */
+const canvas = document.getElementById('cv');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const BGS = [
+  {name:'sapa', dur:6, fn:bgSapa},
+  {name:'mekong', dur:6, fn:bgMekong},
+  {name:'hoian', dur:6, fn:bgHoiAn},
+  {name:'nhatrang', dur:6, fn:bgNhaTrang},
+  {name:'taynguyen', dur:6, fn:bgTayNguyen},
+];
+const TOTAL_DUR = BGS.reduce((a,b)=>a+b.dur, 0);
+
+window.__seek = function(t){
+  t = Math.max(0, Math.min(TOTAL_DUR-0.001, t));
+  let acc = 0;
+  for(const b of BGS){
+    if(t < acc + b.dur){
+      const tRel = t - acc;
+      // fade chuyển cảnh 0.5s
+      ctx.save();
+      b.fn(ctx, tRel, W, H);
+      if(tRel < 0.5){
+        ctx.fillStyle = `rgba(232,226,210,${1-tRel/0.5})`;
+        ctx.fillRect(0,0,W,H);
+      }
+      ctx.restore();
+      return;
+    }
+    acc += b.dur;
+  }
+};
+window.__duration = ()=> TOTAL_DUR;
+
+const params = new URLSearchParams(location.search);
+if(params.has('live')){
+  const t0 = performance.now();
+  (function loop(){
+    const t = ((performance.now()-t0)/1000) % TOTAL_DUR;
+    window.__seek(t);
+    requestAnimationFrame(loop);
+  })();
+} else {
+  window.__seek(0.01);
+}
+</script>
+</body>
+</html>

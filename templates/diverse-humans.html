@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>doodle-anim — Nhân vật đa dạng (Diverse Humans)</title>
+<style>
+  html,body{margin:0;padding:0;background:#e8e2d2;height:100%;overflow:hidden}
+  canvas{display:block;margin:0 auto}
+</style>
+</head>
+<body>
+<canvas id="cv" width="1800" height="900"></canvas>
+<script>
+'use strict';
+/* ============================================================
+ * doodle-anim — diverse-humans.html
+ * 6 nhân vật người đa dạng vẽ tay procedural:
+ * Ông già, Bà già, Em bé, Vận động viên, Cô giáo, Chú bộ đội.
+ * Mỗi nhân vật có animation đặc trưng.
+ * ============================================================ */
+
+function mulberry32(seed){
+  let a = seed >>> 0;
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const INK = '#2b2620';
+function wob(pts, seed, mag){
+  const r = mulberry32(seed); mag = mag || 1.2;
+  return pts.map(p => [p[0] + (r()*2-1)*mag, p[1] + (r()*2-1)*mag]);
+}
+function ell(cx, cy, rx, ry, n, rot){
+  n = n || 16; rot = rot || 0;
+  const pts = [];
+  for(let i=0;i<n;i++){
+    const a = (i/n)*Math.PI*2 + rot;
+    pts.push([cx + Math.cos(a)*rx, cy + Math.sin(a)*ry]);
+  }
+  return pts;
+}
+function stroke(ctx, pts, o){
+  o = o || {};
+  const p = wob(pts, o.seed || 7, o.mag || 1.1);
+  ctx.save();
+  ctx.strokeStyle = o.color || INK;
+  ctx.lineWidth = o.width || 2.6;
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  p.forEach((pt,i)=>{ i?ctx.lineTo(pt[0],pt[1]):ctx.moveTo(pt[0],pt[1]); });
+  if(o.close) ctx.closePath();
+  if(o.fill){ ctx.fillStyle = o.fill; ctx.globalAlpha = o.alpha != null ? o.alpha : 0.92; ctx.fill(); ctx.globalAlpha = 1; }
+  if(o.fillClose){ ctx.closePath(); ctx.fillStyle = o.fill; ctx.globalAlpha = o.alpha != null ? o.alpha : 0.92; ctx.fill(); ctx.globalAlpha = 1; }
+  else ctx.stroke();
+  ctx.restore();
+}
+function fillEll(ctx, cx, cy, rx, ry, color, seed, alpha){
+  stroke(ctx, ell(cx, cy, rx, ry, 18), {seed:seed||7, fill:color, fillClose:true, alpha:alpha==null?0.9:alpha, width:2.4});
+}
+function dot(ctx, x, y, r, color){
+  ctx.save(); ctx.fillStyle = color || INK;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill(); ctx.restore();
+}
+/* khung người cơ bản: đầu + thân + tay + chân, pose theo tham số */
+function limb(ctx, pts, seed, width, color){
+  stroke(ctx, pts, {seed:seed, width:width||5, color:color||INK});
+}
+
+/* ============================================================
+ * 1. ÔNG GIÀ — tóc bạc, râu dài, gậy chống, lưng còng
+ * ============================================================ */
+function drawOldMan(ctx, t, x, y, scale, dir, opts){
+  opts = opts || {}; const s = opts.seed || 201;
+  ctx.save(); ctx.translate(x, y); ctx.scale(scale*dir, scale);
+  const step = Math.sin(t*3.2);
+  // chân bước chậm, run nhẹ
+  const l1 = step*7, l2 = -step*7;
+  limb(ctx, [[-8,-70],[-10+l1*0.4,-34],[-10+l1,0]], s+1, 7, '#4a4238');
+  limb(ctx, [[8,-70],[10+l2*0.4,-34],[10+l2,0]], s+2, 7, '#4a4238');
+  // thân còng
+  ctx.save(); ctx.translate(0,-70); ctx.rotate(0.22);
+  stroke(ctx, ell(0, -34, 20, 30, 16), {seed:s+3, fill:'#6b5d4f', fillClose:true, width:2.6});
+  // đầu + tóc bạc + râu dài
+  ctx.save(); ctx.translate(6, -72);
+  fillEll(ctx, 0, 0, 15, 14, '#e8c39e', s+4);
+  stroke(ctx, [[-13,-6],[-15,-16],[-6,-12]], {seed:s+5, fill:'#e8e4da', fillClose:true, width:2});
+  stroke(ctx, [[13,-6],[15,-16],[6,-12]], {seed:s+6, fill:'#e8e4da', fillClose:true, width:2});
+  fillEll(ctx, 0, -11, 14, 6, '#e8e4da', s+7, 0.95); // tóc bạc
+  const blink = Math.sin(t*0.7)>0.97?0.15:1;
+  ctx.save(); ctx.scale(1,blink); dot(ctx,-5,-1,2.2); dot(ctx,5,-1,2.2); ctx.restore();
+  // râu dài phất phơ
+  const beardW = Math.sin(t*2)*3;
+  stroke(ctx, [[-6,8],[-8+beardW,26],[0,32],[8+beardW,26],[6,8]], {seed:s+8, fill:'#e8e4da', fillClose:true, alpha:0.95, width:2});
+  ctx.restore();
+  // tay: một tay chống gậy
+  const caneX = 34, sway = Math.sin(t*3.2)*2;
+  limb(ctx, [[12,-46],[caneX-4,-20+sway],[caneX,-2]], s+9, 6, '#6b5d4f');
+  limb(ctx, [[-12,-46],[-20,-24],[-16,-6+sway]], s+10, 6, '#6b5d4f');
+  ctx.restore();
+  // gậy chống
+  stroke(ctx, [[caneX,-58],[caneX,0]], {seed:s+11, width:4.5, color:'#7a5c3e'});
+  stroke(ctx, [[caneX,-58],[caneX+10,-64]], {seed:s+12, width:4, color:'#7a5c3e'});
+  ctx.restore();
+}
+
+/* ============================================================
+ * 2. BÀ GIÀ — tóc búi, kính lão, áo bà ba
+ * ============================================================ */
+function drawOldWoman(ctx, t, x, y, scale, dir, opts){
+  opts = opts || {}; const s = opts.seed || 202;
+  ctx.save(); ctx.translate(x, y); ctx.scale(scale*dir, scale);
+  const step = Math.sin(t*3.6);
+  // chân: váy dài che bớt
+  limb(ctx, [[-7,-64],[-9+step*4,-20],[-9+step*6,0]], s+1, 6.5, '#4a4238');
+  limb(ctx, [[7,-64],[9-step*4,-20],[9-step*6,0]], s+2, 6.5, '#4a4238');
+  // áo bà ba (váy dài)
+  stroke(ctx, [[-16,-104],[16,-104],[22,-30],[-22,-30]], {seed:s+3, fill:'#8a6f9e', fillClose:true, width:2.6});
+  stroke(ctx, [[0,-104],[0,-40]], {seed:s+4, width:1.8, color:'#6e5780'}); // hàng nút
+  for(let i=0;i<3;i++) dot(ctx, 0, -92+i*20, 1.8, '#5c476e');
+  // tay vẫy quạt nan
+  const fanW = Math.sin(t*5)*8;
+  limb(ctx, [[-14,-92],[-30,-70+fanW*0.3],[-38,-52+fanW]], s+5, 5.5, '#8a6f9e');
+  limb(ctx, [[14,-92],[24,-70],[22,-50]], s+6, 5.5, '#8a6f9e');
+  // quạt nan
+  ctx.save(); ctx.translate(-38, -52+fanW); ctx.rotate(-0.4+Math.sin(t*5)*0.1);
+  stroke(ctx, ell(0, -12, 14, 16, 12), {seed:s+7, fill:'#f0e2c4', fillClose:true, width:2.2});
+  for(let i=-1;i<=1;i++) stroke(ctx, [[0,0],[i*8,-24]], {seed:s+8+i, width:1.4, color:'#a08c5a'});
+  ctx.restore();
+  // đầu: tóc búi + kính lão
+  ctx.save(); ctx.translate(0, -122);
+  fillEll(ctx, 0, 0, 14, 13, '#e8c39e', s+10);
+  fillEll(ctx, 0, -14, 9, 8, '#d8d4cc', s+11, 0.95); // búi tóc bạc
+  dot(ctx, 0, -14, 2, '#a09a8e'); // trâm
+  const blink = Math.sin(t*0.75+2)>0.97?0.15:1;
+  // kính lão tròn
+  ctx.save(); ctx.scale(1,blink); dot(ctx,-5,-1,2); dot(ctx,5,-1,2); ctx.restore();
+  ctx.strokeStyle = INK; ctx.lineWidth = 1.6;
+  ctx.beginPath(); ctx.arc(-5,-1,5.5,0,Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(5,-1,5.5,0,Math.PI*2); ctx.stroke();
+  stroke(ctx, [[-10.5,-1],[-14,-3]], {seed:s+12, width:1.4});
+  stroke(ctx, [[-0.5,-1],[0.5,-1]], {seed:s+13, width:1.4});
+  // miệng cười móm mém
+  stroke(ctx, [[-5,7],[0,9],[5,7]], {seed:s+14, width:1.8});
+  // nếp nhăn
+  stroke(ctx, [[-9,-8],[-4,-9]], {seed:s+15, width:1, mag:0.5});
+  stroke(ctx, [[9,-8],[4,-9]], {seed:s+16, width:1, mag:0.5});
+  ctx.restore();
+  ctx.restore();
+}
+
+/* ============================================================
+ * 3. EM BÉ — đầu to, thân nhỏ, tã lót; bò / chập chững
+ * opts.mode: 'crawl' | 'toddle'
+ * ============================================================ */
+function drawBaby(ctx, t, x, y, scale, dir, opts){
+  opts = opts || {}; const s = opts.seed || 203;
+  const mode = opts.mode || 'toddle';
+  ctx.save(); ctx.translate(x, y); ctx.scale(scale*dir, scale);
+  if(mode === 'crawl'){
+    // bò: 4 chi chạm đất
+    const c = Math.sin(t*6);
+    limb(ctx, [[-14,-16],[-22+c*5,-2],[-26+c*5,0]], s+1, 6, '#e8c39e');
+    limb(ctx, [[14,-16],[22-c*5,-2],[26-c*5,0]], s+2, 6, '#e8c39e');
+    limb(ctx, [[-10,-30],[-16+c*4,-8],[-14+c*4,0]], s+3, 6.5, '#e8c39e');
+    limb(ctx, [[10,-30],[16-c*4,-8],[14-c*4,0]], s+4, 6.5, '#e8c39e');
+    fillEll(ctx, 0, -34, 20, 14, '#f4e8d2', s+5); // thân
+    fillEll(ctx, 0, -26, 12, 8, '#ffffff', s+6, 0.95); // tã
+    drawBabyHead(ctx, t, 26, -40, s+10, 0.3);
+  } else {
+    // chập chững đi: tay giơ ngang giữ thăng bằng, bước loạng choạng
+    const wob2 = Math.sin(t*4)*0.08;
+    ctx.rotate(wob2);
+    const st = Math.sin(t*5);
+    limb(ctx, [[-7,-44],[-9+st*6,-16],[-9+st*8,0]], s+20, 6.5, '#e8c39e');
+    limb(ctx, [[7,-44],[9-st*6,-16],[9-st*8,0]], s+21, 6.5, '#e8c39e');
+    fillEll(ctx, 0, -58, 17, 16, '#a8d8f0', s+22); // áo xanh nhạt
+    fillEll(ctx, 0, -46, 12, 8, '#ffffff', s+23, 0.95); // tã
+    // tay giơ ngang
+    const armW = Math.sin(t*5+1)*4;
+    limb(ctx, [[-14,-62],[-30,-58+armW],[-36,-52+armW]], s+24, 5.5, '#e8c39e');
+    limb(ctx, [[14,-62],[30,-58-armW],[36,-52-armW]], s+25, 5.5, '#e8c39e');
+    drawBabyHead(ctx, t, 0, -88, s+26, 0);
+  }
+  ctx.restore();
+}
+function drawBabyHead(ctx, t, x, y, s, tilt){
+  ctx.save(); ctx.translate(x, y); ctx.rotate(tilt||0);
+  fillEll(ctx, 0, 0, 20, 18, '#f2cfae', s+1); // đầu to
+  // tóc lơ thơ
+  stroke(ctx, [[-6,-16],[-10,-24]], {seed:s+2, width:1.8});
+  stroke(ctx, [[0,-18],[0,-27]], {seed:s+3, width:1.8});
+  stroke(ctx, [[6,-16],[10,-24]], {seed:s+4, width:1.8});
+  const blink = Math.sin(t*0.9+3)>0.96?0.15:1;
+  ctx.save(); ctx.scale(1,blink);
+  dot(ctx, -7, -2, 3); dot(ctx, 7, -2, 3); // mắt to tròn
+  ctx.restore();
+  dot(ctx, -6, -3, 1, '#fff'); dot(ctx, 8, -3, 1, '#fff');
+  // má hồng
+  fillEll(ctx, -12, 5, 4, 3, '#f2a0a0', s+5, 0.7);
+  fillEll(ctx, 12, 5, 4, 3, '#f2a0a0', s+6, 0.7);
+  // miệng cười / mút tay
+  stroke(ctx, [[-4,9],[4,9]], {seed:s+7, width:2});
+  ctx.restore();
+}
+
+/* ============================================================
+ * 4. VẬN ĐỘNG VIÊN — cơ bắp, áo thể thao; chạy / nhảy cao
+ * opts.mode: 'run' | 'jump'
+ * ============================================================ */
+function drawAthlete(ctx, t, x, y, scale, dir, opts){
+  opts = opts || {}; const s = opts.seed || 204;
+  const mode = opts.mode || 'run';
+  ctx.save(); ctx.translate(x, y); ctx.scale(scale*dir, scale);
+  const skin = '#d9a066', shirt = '#e05252', shorts = '#2b3a67';
+  if(mode === 'jump'){
+    // nhảy cao: người duỗi, tay vươn lên
+    const jh = Math.abs(Math.sin(t*2.5));
+    ctx.translate(0, -jh*70);
+    ctx.rotate(-jh*0.15);
+    limb(ctx, [[-8,-70],[-14,-34],[-10,-2]], s+1, 8, skin);
+    limb(ctx, [[8,-70],[16,-32],[26,-6]], s+2, 8, skin);
+    stroke(ctx, ell(0, -92, 19, 24, 16), {seed:s+3, fill:shirt, fillClose:true, width:2.6});
+    stroke(ctx, [[-12,-70],[12,-70],[10,-48],[-10,-48]], {seed:s+4, fill:shorts, fillClose:true, width:2.4});
+    limb(ctx, [[-14,-100],[-26,-140],[-22,-160]], s+5, 7, skin); // tay vươn
+    limb(ctx, [[14,-100],[28,-136],[30,-156]], s+6, 7, skin);
+    // cơ bắp
+    fillEll(ctx, -22, -128, 6, 9, skin, s+7, 0.9);
+    fillEll(ctx, 28, -124, 6, 9, skin, s+8, 0.9);
+    drawAthleteHead(ctx, t, 0, -128, skin, s+10);
+    // vạch đích / xà
+    stroke(ctx, [[-70,-170],[70,-170]], {seed:s+11, width:3, color:'#c9bfa8'});
+  } else {
+    // chạy nước rút
+    const r = Math.sin(t*10);
+    limb(ctx, [[-8,-70],[-16+r*14,-36],[-4+r*20,-2]], s+20, 8, skin);
+    limb(ctx, [[8,-70],[18-r*14,-36],[30-r*18,-2]], s+21, 8, skin);
+    ctx.save(); ctx.translate(0,-92); ctx.rotate(0.18);
+    stroke(ctx, ell(0, 0, 19, 24, 16), {seed:s+22, fill:shirt, fillClose:true, width:2.6});
+    stroke(ctx, [[-14,-22],[14,-22]], {seed:s+23, width:3, color:'#fff'}); // số áo
+    dot(ctx, 0, -8, 6, '#fff'); ctx.fillStyle = INK; ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign='center'; ctx.fillText('7', 0, -4);
+    ctx.restore();
+    stroke(ctx, [[-12,-70],[12,-70],[10,-48],[-10,-48]], {seed:s+24, fill:shorts, fillClose:true, width:2.4});
+    // tay đánh mạnh
+    limb(ctx, [[-15,-100],[-34,-84+r*16],[-20,-66+r*20]], s+25, 7, skin);
+    limb(ctx, [[15,-100],[34,-84-r*16],[20,-66-r*20]], s+26, 7, skin);
+    drawAthleteHead(ctx, t, 6, -128, skin, s+27);
+    // vệt tốc độ
+    ctx.globalAlpha = 0.35;
+    for(let i=0;i<3;i++)
+      stroke(ctx, [[-60-i*22,-90+i*14],[-110-i*22,-90+i*14]], {seed:s+28+i, width:3, color:'#a09a8e'});
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+}
+function drawAthleteHead(ctx, t, x, y, skin, s){
+  ctx.save(); ctx.translate(x, y);
+  fillEll(ctx, 0, 0, 14, 13, skin, s+1);
+  // tóc undercut + băng đô
+  fillEll(ctx, 0, -10, 13, 5, '#1e1a16', s+2, 0.95);
+  stroke(ctx, [[-13,-6],[13,-6]], {seed:s+3, width:4, color:'#e05252'});
+  dot(ctx, -5, 0, 2.2); dot(ctx, 5, 0, 2.2);
+  // quyết tâm: lông mày xếch
+  stroke(ctx, [[-9,-7],[-3,-5]], {seed:s+4, width:2});
+  stroke(ctx, [[9,-7],[3,-5]], {seed:s+5, width:2});
+  stroke(ctx, [[-4,8],[4,8]], {seed:s+6, width:2}); // miệng mím
+  ctx.restore();
+}
+
+/* ============================================================
+ * 5. CÔ GIÁO — kính, áo dài; viết bảng / chỉ tay
+ * opts.mode: 'write' | 'point'
+ * ============================================================ */
+function drawTeacher(ctx, t, x, y, scale, dir, opts){
+  opts = opts || {}; const s = opts.seed || 205;
+  const mode = opts.mode || 'write';
+  ctx.save(); ctx.translate(x, y); ctx.scale(scale*dir, scale);
+  // chân (váy áo dài che)
+  limb(ctx, [[-7,-70],[-8,-24],[-8,0]], s+1, 6.5, '#e8c39e');
+  limb(ctx, [[7,-70],[8,-24],[8,0]], s+2, 6.5, '#e8c39e');
+  // áo dài hồng
+  stroke(ctx, [[-15,-112],[15,-112],[20,-20],[-20,-20]], {seed:s+3, fill:'#f2a0b8', fillClose:true, width:2.6});
+  stroke(ctx, [[0,-112],[0,-50]], {seed:s+4, width:1.6, color:'#d17f99'}); // tà
+  stroke(ctx, [[-15,-112],[-24,-40]], {seed:s+5, width:2, color:'#d17f99'});
+  // tay
+  if(mode === 'write'){
+    const wr = Math.sin(t*7)*5;
+    limb(ctx, [[-13,-100],[-26,-84],[-30,-70+wr]], s+6, 5.5, '#f2a0b8');
+    limb(ctx, [[13,-100],[26,-88],[30,-80]], s+7, 5.5, '#f2a0b8');
+    // phấn viết
+    dot(ctx, -30, -68+wr, 2, '#fff');
+    // nét chữ nguệch ngoạc trên bảng
+    ctx.save(); ctx.translate(-30,-68+wr);
+    stroke(ctx, [[0,0],[14,-6+Math.sin(t*7)*3],[28,0]], {seed:s+8, width:1.6, color:'#fff'});
+    ctx.restore();
+  } else {
+    // chỉ tay (thước kẻ)
+    limb(ctx, [[-13,-100],[-24,-80],[-26,-64]], s+9, 5.5, '#f2a0b8');
+    limb(ctx, [[13,-100],[34,-92],[48,-84]], s+10, 5.5, '#f2a0b8');
+    stroke(ctx, [[48,-84],[72,-72]], {seed:s+11, width:3.5, color:'#c9a24b'}); // thước
+  }
+  // đầu: tóc dài + kính
+  ctx.save(); ctx.translate(0, -130);
+  fillEll(ctx, 0, 0, 14, 13, '#f2cfae', s+12);
+  // tóc dài đen
+  stroke(ctx, [[-13,-4],[-18,22],[-10,26]], {seed:s+13, fill:'#241f1a', fillClose:true, width:2.2});
+  stroke(ctx, [[13,-4],[18,22],[10,26]], {seed:s+14, fill:'#241f1a', fillClose:true, width:2.2});
+  fillEll(ctx, 0, -11, 13, 5, '#241f1a', s+15, 0.95);
+  const blink = Math.sin(t*0.8+4)>0.97?0.15:1;
+  ctx.save(); ctx.scale(1,blink); dot(ctx,-5,-1,2); dot(ctx,5,-1,2); ctx.restore();
+  ctx.strokeStyle = INK; ctx.lineWidth = 1.5;
+  ctx.strokeRect(-10.5, -6.5, 11, 10); ctx.strokeRect(-0.5, -6.5, 11, 10); // kính vuông
+  stroke(ctx, [[-10.5,-3],[-14,-5]], {seed:s+16, width:1.3});
+  stroke(ctx, [[-4,7],[4,7]], {seed:s+17, width:1.8}); // cười dịu
+  ctx.restore();
+  ctx.restore();
+}
+
+/* ============================================================
+ * 6. CHÚ BỘ ĐỘI — mũ cối, quân phục xanh; hành quân / chào
+ * opts.mode: 'march' | 'salute'
+ * ============================================================ */
+function drawSoldier(ctx, t, x, y, scale, dir, opts){
+  opts = opts || {}; const s = opts.seed || 206;
+  const mode = opts.mode || 'march';
+  const uni = '#4e6e4e';
+  ctx.save(); ctx.translate(x, y); ctx.scale(scale*dir, scale);
+  if(mode === 'salute'){
+    // đứng nghiêm chào
+    limb(ctx, [[-8,-72],[-8,-36],[-8,0]], s+1, 8, '#3d3a34');
+    limb(ctx, [[8,-72],[8,-36],[8,0]], s+2, 8, '#3d3a34');
+    stroke(ctx, ell(0, -96, 20, 26, 16), {seed:s+3, fill:uni, fillClose:true, width:2.6});
+    stroke(ctx, [[0,-122],[0,-80]], {seed:s+4, width:2, color:'#3d5c3d'}); // khuy
+    for(let i=0;i<3;i++) dot(ctx, 0, -112+i*12, 1.8, '#2e442e');
+    stroke(ctx, [[-20,-108],[-32,-108]], {seed:s+5, width:4, color:'#c9a24b'}); // cầu vai
+    stroke(ctx, [[20,-108],[32,-108]], {seed:s+6, width:4, color:'#c9a24b'});
+    limb(ctx, [[-16,-104],[-24,-70],[-22,-40]], s+7, 7, uni); // tay trái xuôi
+    // tay phải chào
+    limb(ctx, [[16,-104],[30,-120],[12,-138]], s+8, 7, uni);
+    drawSoldierHead(ctx, t, 0, -140, s+10);
+  } else {
+    // hành quân: bước đều, tay đánh
+    const m = Math.sin(t*6);
+    limb(ctx, [[-8,-72],[-10+m*10,-36],[-8+m*16,0]], s+20, 8, '#3d3a34');
+    limb(ctx, [[8,-72],[10-m*10,-36],[8-m*16,0]], s+21, 8, '#3d3a34');
+    const bob = Math.abs(m)*2;
+    ctx.save(); ctx.translate(0,-96-bob);
+    stroke(ctx, ell(0, 0, 20, 26, 16), {seed:s+22, fill:uni, fillClose:true, width:2.6});
+    for(let i=0;i<3;i++) dot(ctx, 0, -16+i*12, 1.8, '#2e442e');
+    // ba lô
+    stroke(ctx, ell(-24, -2, 10, 16, 12), {seed:s+23, fill:'#5c6e3e', fillClose:true, width:2.2});
+    ctx.restore();
+    limb(ctx, [[-16,-100-bob],[-30,-80+m*14],[-24,-60+m*18]], s+24, 7, uni);
+    limb(ctx, [[16,-100-bob],[30,-80-m*14],[24,-60-m*18]], s+25, 7, uni);
+    drawSoldierHead(ctx, t, m*3, -140-bob, s+26);
+  }
+  ctx.restore();
+}
+function drawSoldierHead(ctx, t, x, y, s){
+  ctx.save(); ctx.translate(x, y);
+  fillEll(ctx, 0, 0, 13, 12, '#e8c39e', s+1);
+  // mũ cối
+  stroke(ctx, ell(0, -10, 16, 9, 14), {seed:s+2, fill:'#c9b678', fillClose:true, width:2.4});
+  dot(ctx, 0, -12, 3, '#e05252'); // sao vàng
+  dot(ctx, -5, -1, 2.1); dot(ctx, 5, -1, 2.1);
+  stroke(ctx, [[-4,7],[4,7]], {seed:s+3, width:2});
+  ctx.restore();
+}
+
+/* ============================================================
+ * DEMO — grid 2x3, mỗi nhân vật 1 panel
+ * ============================================================ */
+const canvas = document.getElementById('cv');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const TOTAL_DUR = 12.0;
+
+function paper(){
+  ctx.fillStyle = '#f2ecdc'; ctx.fillRect(0,0,W,H);
+  const r = mulberry32(7);
+  ctx.globalAlpha = 0.05;
+  for(let i=0;i<1200;i++){
+    ctx.fillStyle = r()>0.5 ? '#d8cdb4' : '#fffdf4';
+    ctx.fillRect(r()*W, r()*H, 2.5, 2.5);
+  }
+  ctx.globalAlpha = 1;
+}
+function panel(x, y, w, h, title, sub){
+  ctx.save();
+  ctx.strokeStyle = INK; ctx.lineWidth = 3;
+  const p = wob([[x,y],[x+w,y],[x+w,y+h],[x,y+h]], 500+x, 1.6);
+  ctx.beginPath(); p.forEach((pt,i)=>{ i?ctx.lineTo(pt[0],pt[1]):ctx.moveTo(pt[0],pt[1]); });
+  ctx.closePath(); ctx.stroke();
+  ctx.fillStyle = INK; ctx.font = 'bold 26px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText(title, x+w/2, y+40);
+  ctx.font = '18px sans-serif'; ctx.fillStyle = '#6b6257';
+  ctx.fillText(sub, x+w/2, y+h-18);
+  ctx.beginPath(); ctx.rect(x+8, y+54, w-16, h-100); ctx.clip();
+  ctx.restore();
+}
+function ground(x, y, w, seed){
+  stroke(ctx, [[x,y],[x+w,y]], {seed:seed, width:2.5, color:'#8a7f6a', mag:2});
+}
+
+const CHARS = [
+  {title:'👴 ÔNG GIÀ', sub:'chống gậy đi bộ', draw:(t,x,y)=>drawOldMan(ctx,t,x,y,1.15,1,{seed:201})},
+  {title:'👵 BÀ GIÀ', sub:'quạt nan', draw:(t,x,y)=>drawOldWoman(ctx,t,x,y,1.1,1,{seed:202})},
+  {title:'👶 EM BÉ', sub:'chập chững / bò', draw:(t,x,y)=>{
+      const cyc = Math.floor(t/3)%2;
+      drawBaby(ctx,t, x, y, 1.5, 1, {mode:cyc?'crawl':'toddle', seed:203});
+  }},
+  {title:'🏃 VĐV', sub:'chạy / nhảy cao', draw:(t,x,y)=>{
+      const cyc = Math.floor(t/3)%2;
+      drawAthlete(ctx,t, x, y, 1.05, 1, {mode:cyc?'jump':'run', seed:204});
+  }},
+  {title:'👩‍🏫 CÔ GIÁO', sub:'viết bảng / chỉ tay', draw:(t,x,y)=>{
+      const cyc = Math.floor(t/3)%2;
+      // bảng đen phía sau
+      ctx.save();
+      stroke(ctx, [[x-110,y-260],[x+110,y-260],[x+110,y-120],[x-110,y-120]],
+        {seed:301, fill:'#2e3a34', fillClose:true, width:3});
+      ctx.restore();
+      drawTeacher(ctx,t, x, y, 1.0, 1, {mode:cyc?'point':'write', seed:205});
+  }},
+  {title:'🪖 CHÚ BỘ ĐỘI', sub:'hành quân / chào', draw:(t,x,y)=>{
+      const cyc = Math.floor(t/3)%2;
+      drawSoldier(ctx,t, x, y, 1.1, 1, {mode:cyc?'salute':'march', seed:206});
+  }},
+];
+
+window.__seek = function(t){
+  t = Math.max(0, Math.min(TOTAL_DUR, t));
+  paper();
+  const cols = 3, rows = 2;
+  const pw = W/cols - 20, ph = H/rows - 16;
+  CHARS.forEach((c, i)=>{
+    const cx = 10 + (i%cols)*(pw+20), cy = 8 + Math.floor(i/cols)*(ph+16);
+    panel(cx, cy, pw, ph, c.title, c.sub);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(cx+8, cy+54, pw-16, ph-100); ctx.clip();
+    ground(cx+50, cy+ph-56, pw-100, 400+i);
+    c.draw(t, cx+pw/2, cy+ph-56);
+    ctx.restore();
+  });
+};
+window.__duration = ()=> TOTAL_DUR;
+
+const params = new URLSearchParams(location.search);
+if(params.has('live')){
+  const t0 = performance.now();
+  (function loop(){
+    const t = ((performance.now()-t0)/1000) % TOTAL_DUR;
+    window.__seek(t);
+    requestAnimationFrame(loop);
+  })();
+} else {
+  window.__seek(0.01);
+}
+</script>
+</body>
+</html>

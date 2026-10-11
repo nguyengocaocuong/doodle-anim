@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>doodle-anim — Showcase: Nhân vật & Backgrounds mới</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:#211d18;color:#f2ecdc;font-family:sans-serif;min-height:100%}
+  header{background:#14110d;padding:18px 28px;border-bottom:3px solid #f7ba3e;position:sticky;top:0;z-index:10}
+  header h1{margin:0;font-size:26px;letter-spacing:1px}
+  header p{margin:6px 0 0;color:#b8ab90;font-size:14px}
+  nav{display:flex;gap:10px;padding:16px 28px;background:#2b2620;position:sticky;top:0;z-index:9}
+  nav button{
+    background:#3d372f;color:#f2ecdc;border:2px solid #5c544a;border-radius:10px;
+    padding:12px 22px;font-size:16px;cursor:pointer;transition:all .15s;
+  }
+  nav button:hover{border-color:#f7ba3e}
+  nav button.active{background:#f7ba3e;color:#211d18;border-color:#f7ba3e;font-weight:bold}
+  .stats{display:flex;gap:14px;padding:14px 28px;flex-wrap:wrap}
+  .stat{background:#2b2620;border:2px solid #5c544a;border-radius:10px;padding:10px 18px;font-size:14px}
+  .stat b{color:#f7ba3e;font-size:20px;margin-right:6px}
+  main{padding:0 28px 40px}
+  section{display:none}
+  section.active{display:block}
+  .frame-wrap{background:#000;border:3px solid #5c544a;border-radius:12px;overflow:hidden;margin-top:8px}
+  iframe{width:100%;height:78vh;border:0;display:block;background:#e8e2d2}
+  .desc{background:#2b2620;border-radius:10px;padding:16px 20px;margin-top:14px;font-size:15px;line-height:1.7}
+  .desc h3{margin:0 0 8px;color:#f7ba3e}
+  .desc ul{margin:8px 0;padding-left:22px}
+  .desc li{margin:4px 0}
+  code{background:#14110d;padding:2px 8px;border-radius:6px;color:#f7ba3e;font-size:13px}
+  footer{padding:20px 28px;color:#8a7f6a;font-size:13px;border-top:1px solid #3d372f}
+</style>
+</head>
+<body>
+<header>
+  <h1>🎨 doodle-anim — Showcase nhân vật & backgrounds mới</h1>
+  <p>Bản mở rộng: động vật · nhân vật đa dạng · backgrounds Việt Nam — 100% vẽ bằng code, không assets</p>
+</header>
+
+<div class="stats">
+  <div class="stat"><b>4</b> con vật</div>
+  <div class="stat"><b>6</b> nhân vật người mới</div>
+  <div class="stat"><b>5</b> backgrounds Việt Nam</div>
+  <div class="stat"><b>15</b> thực thể vẽ tay mới</div>
+</div>
+
+<nav>
+  <button class="active" data-tab="animals">🐾 Động vật</button>
+  <button data-tab="humans">🧑 Nhân vật đa dạng</button>
+  <button data-tab="bg">🏞️ Backgrounds VN</button>
+</nav>
+
+<main>
+  <section id="tab-animals" class="active">
+    <div class="frame-wrap"><iframe src="animals.html?live"></iframe></div>
+    <div class="desc">
+      <h3>🐾 4 con vật — <code>templates/animals.html</code></h3>
+      <ul>
+        <li><b>🐱 Mèo</b> — <code>drawCat(ctx,t,x,y,scale,dir,{mode,fur})</code>: đi bộ (4 chân so le, đuôi vẫy), ngồi (đuôi cuộn, chớp mắt, râu)</li>
+        <li><b>🐦 Chim</b> — <code>drawBird(...)</code>: bay (vỗ cánh), đậu trên cành (ngó nghiêng), nhảy lò cò</li>
+        <li><b>🐰 Thỏ</b> — <code>drawRabbit(...)</code>: nhảy (parabola, tai dựng), gặm cà rốt (tai cụp, đầu gật)</li>
+        <li><b>🐔 Gà</b> — <code>drawChicken(...)</code>: đi bộ (đầu lắc), mổ thóc (cổ gật, hạt thóc rơi)</li>
+      </ul>
+      Animation mode tự đổi mỗi 4 giây trong demo. Màu lông/mỏ/mào tùy chỉnh qua <code>opts</code>.
+    </div>
+  </section>
+
+  <section id="tab-humans">
+    <div class="frame-wrap"><iframe src="diverse-humans.html?live"></iframe></div>
+    <div class="desc">
+      <h3>🧑 6 nhân vật người — <code>templates/diverse-humans.html</code></h3>
+      <ul>
+        <li><b>👴 Ông già</b> — <code>drawOldMan</code>: tóc bạc, râu dài phất phơ, gậy chống, lưng còng, bước chậm</li>
+        <li><b>👵 Bà già</b> — <code>drawOldWoman</code>: tóc búi + trâm, kính lão tròn, áo bà ba, quạt nan</li>
+        <li><b>👶 Em bé</b> — <code>drawBaby({mode:'crawl'|'toddle'})</code>: bò (4 chi), chập chững (tay giơ giữ thăng bằng, loạng choạng)</li>
+        <li><b>🏃 Vận động viên</b> — <code>drawAthlete({mode:'run'|'jump'})</code>: chạy nước rút (vệt tốc độ), nhảy cao qua xà</li>
+        <li><b>👩‍🏫 Cô giáo</b> — <code>drawTeacher({mode:'write'|'point'})</code>: áo dài, viết bảng (phấn + nét chữ), chỉ thước</li>
+        <li><b>🪖 Chú bộ đội</b> — <code>drawSoldier({mode:'march'|'salute'})</code>: mũ cối sao vàng, hành quân (bước đều, ba lô), chào nghiêm</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="tab-bg">
+    <div class="frame-wrap"><iframe src="vietnam-backgrounds.html?live"></iframe></div>
+    <div class="desc">
+      <h3>🏞️ 5 backgrounds Việt Nam — <code>templates/vietnam-backgrounds.html</code></h3>
+      <ul>
+        <li><b>⛰ Ruộng bậc thang Sapa</b> — 7 tầng ruộng, mặt nước phản chiếu, lúa đung đưa, nông dân gùi</li>
+        <li><b>🛶 Chợ nổi Mekong</b> — 3 ghe trái cây, cây bẹo treo hàng (🍍🍉🥥), sóng lăn tăn, dừa nước</li>
+        <li><b>🏮 Phố cổ Hội An</b> — hoàng hôn tím cam, nhà cổ 2 lớp, 3 dây đèn lồng đung đưa + phát sáng, phản chiếu mặt đất</li>
+        <li><b>🌊 Biển Nha Trang</b> — 3 lớp sóng động, thuyền thúng + ngư dân đội nón lá, bãi cát, dừa</li>
+        <li><b>🌲 Rừng Tây Nguyên</b> — cây cổ thụ đung đưa, nhà rông mái cao vút + hoa văn thổ cẩm, đom đóm bay</li>
+      </ul>
+      Mỗi background hiện 6 giây với fade chuyển cảnh. Gọi <code>bgSapa(ctx,t,W,H)</code>... để vẽ lẻ từng cảnh.
+    </div>
+  </section>
+</main>
+
+<footer>
+  doodle-anim fork — nhân vật & backgrounds bổ sung · Mở từng file với <code>?live</code> để xem animation ·
+  Render pipeline: gọi <code>window.__seek(t)</code> qua Playwright như các template gốc.
+</footer>
+
+<script>
+document.querySelectorAll('nav button').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('nav button').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('main section').forEach(s=>s.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-'+btn.dataset.tab).classList.add('active');
+  });
+});
+</script>
+</body>
+</html>
