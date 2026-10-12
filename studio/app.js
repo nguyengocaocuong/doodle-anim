@@ -42,6 +42,23 @@ const BACKGROUNDS = {
 };
 const ANIMS = {idle:'Đứng yên', walk:'Đi bộ', jump:'Nhảy', celebrate:'Ăn mừng'};
 
+// ---------- Weather / FX catalog ----------
+const WEATHER_IDS = ['rain','snow','fog','dust','leaves'];
+const WEATHER_DEFS = [
+  {id:'rain',   name:'🌧️ Mưa',     desc:'Hạt mưa xiên theo gió'},
+  {id:'snow',   name:'❄️ Tuyết',    desc:'Bông tuyết rơi lả tả'},
+  {id:'fog',    name:'🌫️ Sương mù', desc:'Lớp mờ trôi ngang'},
+  {id:'dust',   name:'✨ Đom đóm',   desc:'Bụi bay / phát sáng ban đêm'},
+  {id:'leaves', name:'🍂 Lá rơi',    desc:'Lá xoay rơi theo gió'},
+];
+const EMOJIS = ['😢','😭','💧','✨','💫','❤️','💔','😡','💢','😱','😂','🤣',
+  '👏','🙏','💡','❓','❗','💤','🌧️','⛈️','🔥','💥','🎉','👻','😴','🤔','👀','💪'];
+const BUBBLE_STYLES = [
+  {id:'speech', name:'💬 Thoại',    desc:'Bong bóng nói'},
+  {id:'thought',name:'💭 Suy nghĩ', desc:'Bong bóng nghĩ (nét đứt)'},
+  {id:'shout',  name:'📢 Hét to',    desc:'Nền vàng, viền đỏ'},
+];
+
 // ---------- State ----------
 let uid = 0;
 const nid = (p) => p + '_' + (++uid) + '_' + Date.now().toString(36);
@@ -54,6 +71,8 @@ const state = {
   },
   activeScene: 0,
   selectedChar: null,   // instance id
+  selectedOverlay: null, // overlay id
+  dragOverlay: null,
   playing: false,
   playSceneIdx: 0,
   playT0: 0,
@@ -69,6 +88,13 @@ const $ = (s) => document.querySelector(s);
 const canvas = $('#stage');
 const ctx = canvas.getContext('2d');
 const imgCache = {};
+
+// SFX engine (Web Audio synth) — loaded from js/sfx-engine.js
+const sfxEngine = (typeof SFXEngine !== 'undefined') ? new SFXEngine() : null;
+
+// Weather/FX engine — loaded from js/weather-engine.js (deterministic particles)
+const fxCanvas = $('#fxCanvas');
+const fxEngine = (typeof WeatherEngine !== 'undefined' && fxCanvas) ? new WeatherEngine(fxCanvas) : null;
 
 function loadImg(src){
   if (imgCache[src]) return imgCache[src];
@@ -94,7 +120,31 @@ function newScene(over={}){
     music: 'none',
     dialogue: '',
     characters: [],
+    sfx: [],   // [{id, key, name, t0, volume(0-100), loop}]
+    weather: {rain:0, snow:0, fog:0, dust:0, leaves:0},  // 0-100 per effect
+    overlays: [], // [{id, type:'emoji'|'bubble', value/text, x, y, size, t0, t1}]
   }, over);
+}
+function newSfxClip(key){
+  const info = (typeof SFXEngine !== 'undefined') ? SFXEngine.info(key) : null;
+  return { id: nid('x'), key, name: info?.n || key,
+           dur: (typeof SFX_DUR !== 'undefined' ? SFX_DUR[key] : null) || 2,
+           t0: 0, volume: 80, loop: !!(info?.loop) };
+}
+function newOverlay(type, value, x, y){
+  const sc = activeSceneObj();
+  return {
+    id: nid('o'),
+    type: type === 'bubble' ? 'bubble' : 'emoji',
+    value: type === 'emoji' ? (value || '✨') : (value || 'speech'),
+    text: '...',
+    x: Math.round(x), y: Math.round(y),
+    size: 64,
+    t0: 0, t1: sc ? sc.duration : 10,
+  };
+}
+function getSelOverlay(){
+  return activeSceneObj()?.overlays.find(o=>o.id===state.selectedOverlay) || null;
 }
 function newCharInstance(charKey, x, y){
   return { id: nid('c'), char: charKey, x, y, scale: 1.0, flip: false, anim: 'idle', waypoints: [] };
@@ -115,6 +165,15 @@ function toast(msg, ms=2200){
 // ---------- Library ----------
 function renderLibrary(){
   const grid = $('#libGrid'); grid.innerHTML = '';
+  const hint = $('#libHint');
+  if (hint) hint.textContent = state.libTab === 'sfx'
+    ? '▶ bấm để nghe thử • double-click để thêm vào scene'
+    : state.libTab === 'fx'
+    ? '🌦️ bật/tắt hiệu ứng thời tiết • 😀 click emoji để thêm vào canvas'
+    : 'Kéo thả vào canvas để thêm';
+  if (state.libTab === 'sfx'){ renderSfxLibrary(grid); }
+  else if (state.libTab === 'fx'){ renderFxTab(grid); }
+  else {
   const mk = (key, label, innerHTML, extra='') => {
     const d = document.createElement('div');
     d.className = 'lib-item ' + extra;
@@ -141,7 +200,202 @@ function renderLibrary(){
   } else {
     for (const [k,v] of Object.entries(BACKGROUNDS)) mk(k, v.name, `<img src="${v.file}" alt="${v.name}">`, 'bg');
   }
+  }
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===state.libTab));
+}
+
+// ---------- FX tab: weather + emoji/meme overlays ----------
+function renderFxTab(grid){
+  const sc = activeSceneObj();
+  grid.style.display = 'block';
+  if (!sc){ grid.innerHTML = '<div class="ovl-empty">Chưa có scene.</div>'; return; }
+  if (!Array.isArray(sc.overlays)) sc.overlays = [];
+  if (!sc.weather) sc.weather = {rain:0, snow:0, fog:0, dust:0, leaves:0};
+
+  // --- weather section ---
+  const wxSec = document.createElement('div');
+  wxSec.className = 'fx-sec';
+  wxSec.innerHTML = '<h4>🌦️ Thời tiết</h4><div class="fx-desc">Áp dụng cho scene hiện tại, xem trực tiếp trên canvas.</div>';
+  WEATHER_DEFS.forEach(def=>{
+    const val = Math.max(0, Math.min(100, Math.round(sc.weather[def.id] || 0)));
+    const row = document.createElement('div');
+    row.className = 'wx-row' + (val > 0 ? ' on' : '');
+    row.innerHTML = `
+      <div class="wx-top">
+        <div class="wx-name">${def.name}<small>${def.desc}</small></div>
+        <label class="switch" title="Bật/tắt">
+          <input type="checkbox" ${val > 0 ? 'checked' : ''}>
+          <span class="sl"></span>
+        </label>
+      </div>
+      <div class="wx-slider">Cường độ
+        <input type="range" min="0" max="100" value="${val}">
+        <span class="wx-val">${val}%</span>
+      </div>`;
+    const chk = row.querySelector('input[type=checkbox]');
+    const rng = row.querySelector('input[type=range]');
+    const valEl = row.querySelector('.wx-val');
+    const apply = ()=>{
+      const v = chk.checked ? Math.max(5, +rng.value) : 0;
+      if (chk.checked && +rng.value === 0){ rng.value = 40; }
+      sc.weather[def.id] = chk.checked ? +rng.value : 0;
+      valEl.textContent = sc.weather[def.id] + '%';
+      row.classList.toggle('on', sc.weather[def.id] > 0);
+      syncFxEngine(); renderTimeline();
+    };
+    chk.addEventListener('change', apply);
+    rng.addEventListener('input', ()=>{
+      if (+rng.value > 0 && !chk.checked) chk.checked = true;
+      sc.weather[def.id] = chk.checked ? +rng.value : 0;
+      valEl.textContent = sc.weather[def.id] + '%';
+      row.classList.toggle('on', sc.weather[def.id] > 0);
+      syncFxEngine();
+    });
+    rng.addEventListener('change', renderTimeline);
+    wxSec.appendChild(row);
+  });
+  grid.appendChild(wxSec);
+
+  // --- emoji picker ---
+  const emSec = document.createElement('div');
+  emSec.className = 'fx-sec';
+  emSec.innerHTML = '<h4>😀 Emoji / Meme</h4><div class="fx-desc">Click để thêm vào giữa canvas, sau đó kéo để di chuyển.</div>';
+  const egrid = document.createElement('div');
+  egrid.className = 'emoji-grid';
+  EMOJIS.forEach(e=>{
+    const b = document.createElement('button');
+    b.className = 'emoji-btn'; b.textContent = e; b.title = 'Thêm ' + e;
+    b.addEventListener('click', ()=>{
+      const {w,h} = projSize();
+      const ov = newOverlay('emoji', e, w/2 + (Math.random()*120-60), h*0.45);
+      sc.overlays.push(ov);
+      state.selectedOverlay = ov.id;
+      renderFxTab(grid); renderTimeline();
+      toast('Đã thêm ' + e + ' — kéo để di chuyển');
+    });
+    egrid.appendChild(b);
+  });
+  emSec.appendChild(egrid);
+  grid.appendChild(emSec);
+
+  // --- bubble picker ---
+  const bSec = document.createElement('div');
+  bSec.className = 'fx-sec';
+  bSec.innerHTML = '<h4>💭 Bong bóng thoại</h4>';
+  BUBBLE_STYLES.forEach(st=>{
+    const b = document.createElement('button');
+    b.className = 'bubble-btn';
+    b.innerHTML = `${st.name}<br><small>${st.desc} — click để thêm</small>`;
+    b.addEventListener('click', ()=>{
+      const {w,h} = projSize();
+      const ov = newOverlay('bubble', st.id, w/2, h*0.32);
+      ov.text = st.id === 'thought' ? 'Đang nghĩ...' : st.id === 'shout' ? 'Này!' : 'Xin chào!';
+      sc.overlays.push(ov);
+      state.selectedOverlay = ov.id;
+      renderFxTab(grid); renderTimeline();
+      toast('Đã thêm bong bóng — sửa chữ trong danh sách bên dưới');
+    });
+    bSec.appendChild(b);
+  });
+  grid.appendChild(bSec);
+
+  // --- overlay list ---
+  const oSec = document.createElement('div');
+  oSec.className = 'fx-sec';
+  oSec.innerHTML = `<h4>📋 Overlays trong scene (${sc.overlays.length})</h4>`;
+  if (!sc.overlays.length){
+    oSec.innerHTML += '<div class="ovl-empty">Chưa có — click emoji ở trên để thêm.</div>';
+  }
+  sc.overlays.forEach(ov=>{
+    const row = document.createElement('div');
+    row.className = 'ovl-row' + (ov.id === state.selectedOverlay ? ' sel' : '');
+    const ico = ov.type === 'emoji' ? ov.value : '💬';
+    const label = ov.type === 'emoji' ? ('Emoji ' + ov.value) : ('Bong bóng: ' + (ov.text || ''));
+    row.innerHTML = `
+      <div class="ovl-head" title="Click để chọn">
+        <span><span class="ovl-ico">${ico}</span> ${escHtml(label)}</span>
+        <button class="ovl-del" title="Xóa">✕</button>
+      </div>
+      <div class="ovl-ctl">
+        <label>Hiện từ (s)<input type="number" data-k="t0" value="${ov.t0}" min="0" step="0.5"></label>
+        <label>Đến (s)<input type="number" data-k="t1" value="${ov.t1}" min="0" step="0.5"></label>
+        <label>Cỡ<input type="number" data-k="size" value="${ov.size}" min="16" max="400" step="4"></label>
+      </div>
+      ${ov.type === 'bubble' ? `<div class="ovl-ctl" style="grid-template-columns:1fr"><label>Chữ<input type="text" data-k="text" value="${escHtml(ov.text || '')}"></label></div>` : ''}`;
+    row.querySelector('.ovl-head').addEventListener('click', (e)=>{
+      if (e.target.classList.contains('ovl-del')) return;
+      state.selectedOverlay = ov.id;
+      renderFxTab(grid);
+    });
+    row.querySelector('.ovl-del').addEventListener('click', ()=>{
+      sc.overlays = sc.overlays.filter(x=>x.id !== ov.id);
+      if (state.selectedOverlay === ov.id) state.selectedOverlay = null;
+      renderFxTab(grid); renderTimeline();
+      toast('Đã xóa overlay');
+    });
+    row.querySelectorAll('[data-k]').forEach(inp=>{
+      inp.addEventListener('change', ()=>{
+        const k = inp.dataset.k;
+        if (k === 'text') ov.text = inp.value;
+        else if (k === 'size') ov.size = Math.max(16, Math.min(400, +inp.value || 64));
+        else if (k === 't0') ov.t0 = Math.max(0, +inp.value || 0);
+        else if (k === 't1') ov.t1 = Math.max(0, +inp.value || sc.duration);
+        renderTimeline();
+      });
+      inp.addEventListener('click', (e)=>e.stopPropagation());
+    });
+    oSec.appendChild(row);
+  });
+  grid.appendChild(oSec);
+  grid.style.display = '';
+}
+
+// ---------- SFX library tab ----------
+let sfxCatFilter = 'nature';
+function renderSfxLibrary(grid){
+  if (!sfxEngine || typeof SFX_CATALOG === 'undefined'){
+    grid.innerHTML = '<div class="lib-empty">SFX engine chưa tải được.</div>';
+    return;
+  }
+  const cats = SFX_CATALOG;
+  // category chips
+  const chipRow = document.createElement('div');
+  chipRow.className = 'sfx-cats';
+  cats.forEach(c=>{
+    const b = document.createElement('button');
+    b.className = 'sfx-cat' + (c.id === sfxCatFilter ? ' active' : '');
+    b.textContent = c.name;
+    b.addEventListener('click', ()=>{ sfxCatFilter = c.id; renderLibrary(); });
+    chipRow.appendChild(b);
+  });
+  grid.appendChild(chipRow);
+  const cat = cats.find(c=>c.id===sfxCatFilter) || cats[0];
+  const list = document.createElement('div');
+  list.className = 'sfx-list';
+  cat.items.forEach(it=>{
+    const d = document.createElement('div');
+    d.className = 'sfx-item';
+    d.innerHTML = `
+      <button class="sfx-play" title="Nghe thử">▶</button>
+      <div class="sfx-info"><div class="sfx-name">${it.n}</div><div class="sfx-meta">${it.d}</div></div>`;
+    d.querySelector('.sfx-play').addEventListener('click', (e)=>{
+      e.stopPropagation();
+      sfxEngine.preview(it.k, e.currentTarget);
+    });
+    // double-click = add to current scene
+    d.addEventListener('dblclick', ()=>addSfxToScene(it.k));
+    list.appendChild(d);
+  });
+  grid.appendChild(list);
+}
+
+function addSfxToScene(key){
+  const sc = activeSceneObj(); if(!sc) return;
+  if (!Array.isArray(sc.sfx)) sc.sfx = [];
+  const clip = newSfxClip(key);
+  sc.sfx.push(clip);
+  renderAudioTimeline(); renderTimeline();
+  toast('Đã thêm SFX: ' + clip.name + ' 🔊');
 }
 
 function addCharToScene(charKey, kind){
@@ -174,6 +428,12 @@ function fitCanvas(){
   canvas.style.width = Math.round(w*s)+'px';
   canvas.style.height = Math.round(h*s)+'px';
   canvas._scale = s;
+  // FX overlay canvas shares the exact geometry of #stage
+  if (fxCanvas){
+    fxCanvas.width = w; fxCanvas.height = h;
+    fxCanvas.style.width = canvas.style.width;
+    fxCanvas.style.height = canvas.style.height;
+  }
 }
 function toProj(e){
   const r = canvas.getBoundingClientRect();
@@ -373,6 +633,101 @@ function draw(){
   updateSubtitle();
 }
 
+// ---------- FX layer: weather particles + emoji/bubble overlays ----------
+// Drawn on #fxCanvas (above #stage, below UI). Weather is deterministic:
+// same scene-time => same frame, so preview === render === HTML export.
+function syncFxEngine(){
+  if (!fxEngine) return;
+  const sc = activeSceneObj();
+  fxEngine.setWeather(sc ? sc.weather : null);
+}
+function overlayAt(px, py){
+  const sc = activeSceneObj(); if(!sc || !sc.overlays) return null;
+  for (let i = sc.overlays.length - 1; i >= 0; i--){
+    const ov = sc.overlays[i];
+    const r = (ov.size || 64) / 2 + 14;
+    if (Math.abs(px - ov.x) <= r && Math.abs(py - ov.y) <= r) return ov;
+  }
+  return null;
+}
+function rrPath(c, x, y, w, h, r){
+  r = Math.min(r, w/2, h/2);
+  c.beginPath();
+  c.moveTo(x+r, y);
+  c.arcTo(x+w, y, x+w, y+h, r);
+  c.arcTo(x+w, y+h, x, y+h, r);
+  c.arcTo(x, y+h, x, y, r);
+  c.arcTo(x, y, x+w, y, r);
+  c.closePath();
+}
+function drawOverlaysFx(c, overlays, t, W, H, editMode){
+  if (!overlays || !overlays.length) return;
+  overlays.forEach(ov=>{
+    if (!editMode && (t < (ov.t0 || 0) || t > (ov.t1 == null ? 1e9 : ov.t1))) return;
+    const size = ov.size || 64;
+    const ox = ov.x == null ? W/2 : ov.x, oy = ov.y == null ? H/2 : ov.y;
+    const isSel = ov.id === state.selectedOverlay;
+    if (ov.type === 'emoji'){
+      c.save();
+      c.font = size + 'px serif';
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText(ov.value || '✨', ox, oy);
+      c.restore();
+    } else {
+      // speech / thought / shout bubble
+      const style = ov.value || 'speech';
+      const fs = Math.max(14, Math.round(size * 0.34));
+      c.save();
+      c.font = '600 ' + fs + 'px sans-serif';
+      const tw = c.measureText(ov.text || '').width;
+      const pw = tw + size * 0.9, ph = fs * 2.1;
+      const bx = ox - pw/2, by = oy - ph/2;
+      if (style === 'shout'){ c.fillStyle = '#ffeb3b'; c.strokeStyle = '#d32f2f'; c.lineWidth = 4; }
+      else { c.fillStyle = 'rgba(255,255,255,0.96)'; c.strokeStyle = '#9aa0b4'; c.lineWidth = 2; }
+      if (style === 'thought') c.setLineDash([8, 6]);
+      rrPath(c, bx, by, pw, ph, size * 0.25);
+      c.fill(); c.stroke(); c.setLineDash([]);
+      // tail
+      c.fillStyle = style === 'shout' ? '#ffeb3b' : 'rgba(255,255,255,0.96)';
+      c.beginPath();
+      c.moveTo(ox - 14, by + ph - 2); c.lineTo(ox + 14, by + ph - 2); c.lineTo(ox - 26, by + ph + 30);
+      c.closePath(); c.fill();
+      if (style === 'thought'){
+        c.beginPath(); c.arc(ox - 34, by + ph + 42, 7, 0, 7); c.fill();
+        c.beginPath(); c.arc(ox - 46, by + ph + 58, 4.5, 0, 7); c.fill();
+      }
+      c.fillStyle = '#23262e';
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText(ov.text || '', ox, oy);
+      c.restore();
+    }
+    if (isSel && editMode){
+      c.save();
+      c.strokeStyle = '#6c8cff'; c.lineWidth = 2;
+      c.setLineDash([8, 5]);
+      const r = size/2 + 14;
+      c.strokeRect(ox - r, oy - r, r*2, r*2);
+      c.setLineDash([]);
+      c.restore();
+    }
+  });
+}
+function drawFxLayer(ts){
+  if (!fxEngine) return;
+  const sc = activeSceneObj(); if(!sc) return;
+  const {w, h} = projSize();
+  syncFxEngine();
+  // scene-time for deterministic weather: playback position, else wall-clock
+  const t = (state.playing && state.playElapsed != null)
+    ? state.playElapsed
+    : (ts - fxT0) / 1000;
+  const c2 = fxCanvas.getContext('2d');
+  c2.clearRect(0, 0, w, h);
+  if (fxEngine.hasActive()) WeatherEngine.drawWeather(c2, sc.weather, t, w, h);
+  drawOverlaysFx(c2, sc.overlays, t, w, h, !state.playing);
+}
+let fxT0 = performance.now();
+
 function updateSubtitle(){
   const sc = activeSceneObj();
   $('#subtitleBar').textContent = (state.playing && sc && sc.dialogue) ? sc.dialogue : (sc?.dialogue || '');
@@ -402,6 +757,7 @@ function loop(ts){
     }
   }
   draw();
+  drawFxLayer(ts);
   requestAnimationFrame(loop);
 }
 
@@ -418,6 +774,20 @@ canvas.addEventListener('mousedown', (e)=>{
   if ((e.shiftKey || state.wpMode) && !state.playing){
     const inst = getSelChar();
     if (inst){ addWaypoint(inst, p.x); return; }
+  }
+  // overlay (emoji/bubble) hit first — topmost layer
+  if (!state.playing){
+    const ovHit = overlayAt(p.x, p.y);
+    if (ovHit){
+      state.selectedOverlay = ovHit.id;
+      state.dragOverlay = ovHit;
+      state.dragOffset = {x: ovHit.x - p.x, y: ovHit.y - p.y};
+      canvas.style.cursor = 'move';
+      if (state.libTab === 'fx') renderLibrary();
+      draw();
+      return;
+    }
+    state.selectedOverlay = null;
   }
   const hit = charAt(p.x,p.y);
   if (hit){
@@ -446,6 +816,15 @@ canvas.addEventListener('contextmenu', (e)=>{
   }
 });
 window.addEventListener('mousemove', (e)=>{
+  if (state.dragOverlay){
+    const r = canvas.getBoundingClientRect();
+    if (e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom) return;
+    const p = toProj(e);
+    const {w,h} = projSize();
+    state.dragOverlay.x = Math.round(Math.min(w,Math.max(0,p.x+state.dragOffset.x)));
+    state.dragOverlay.y = Math.round(Math.min(h,Math.max(0,p.y+state.dragOffset.y)));
+    return; // fx layer redraws every frame via loop()
+  }
   if (!state.dragChar) return;
   const r = canvas.getBoundingClientRect();
   if (e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom) return;
@@ -455,7 +834,7 @@ window.addEventListener('mousemove', (e)=>{
   state.dragChar.y = Math.round(Math.min(h,Math.max(0,p.y+state.dragOffset.y)));
   syncCharProps(); draw();
 });
-window.addEventListener('mouseup', ()=>{ state.dragChar=null; canvas.style.cursor='default'; });
+window.addEventListener('mouseup', ()=>{ state.dragChar=null; state.dragOverlay=null; canvas.style.cursor='default'; });
 
 // drop from library
 canvas.addEventListener('dragover', (e)=>{ e.preventDefault(); e.dataTransfer.dropEffect='copy'; });
@@ -474,9 +853,19 @@ canvas.addEventListener('drop', (e)=>{
 });
 
 document.addEventListener('keydown', (e)=>{
+  const tag = document.activeElement?.tagName;
+  if (tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return;
+  if ((e.key==='Delete'||e.key==='Backspace') && state.selectedOverlay){
+    const sc = activeSceneObj();
+    if (sc){
+      sc.overlays = (sc.overlays||[]).filter(o=>o.id!==state.selectedOverlay);
+      state.selectedOverlay = null;
+      if (state.libTab==='fx') renderLibrary();
+      renderTimeline(); toast('Đã xóa overlay');
+      return;
+    }
+  }
   if ((e.key==='Delete'||e.key==='Backspace') && state.selectedChar){
-    const tag = document.activeElement?.tagName;
-    if (tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return;
     deleteSelectedChar();
   }
 });
@@ -580,7 +969,7 @@ $('#btnWpClear')?.addEventListener('click', ()=>{
 });
 
 $('#propBg').addEventListener('change', e=>{ activeSceneObj().background=e.target.value; draw(); renderTimeline(); });
-$('#propDur').addEventListener('input', e=>{ activeSceneObj().duration=+e.target.value; $('#durVal').textContent=e.target.value; renderTimeline(); updateTotal(); });
+$('#propDur').addEventListener('input', e=>{ activeSceneObj().duration=+e.target.value; $('#durVal').textContent=e.target.value; renderTimeline(); renderAudioTimeline(); updateTotal(); });
 $('#propMusic').addEventListener('change', e=>{ activeSceneObj().music=e.target.value; });
 $('#propDialogue').addEventListener('input', e=>{ activeSceneObj().dialogue=e.target.value; updateSubtitle(); });
 $('#propX').addEventListener('input', e=>{ const c=getSelChar(); if(c){c.x=+e.target.value||0; draw();} });
@@ -598,13 +987,14 @@ function renderTimeline(){
     d.className = 'scene-block'+(i===state.activeScene?' active':'');
     const bg = BACKGROUNDS[sc.background];
     const wpCount = sc.characters.reduce((a,c)=>a+((c.waypoints||[]).length),0);
+    const sfxCount = (sc.sfx||[]).length;
     const wpDots = sc.characters.flatMap(c=>(c.waypoints||[]))
       .map(wp=>`<span class="wp-dot" style="left:${(wp.t/sc.duration*100).toFixed(1)}%"></span>`).join('');
     d.innerHTML = `
       <button class="s-del" title="Xóa scene">×</button>
       <img class="thumb" src="${bg?bg.file:''}" alt="">
       <div class="s-title">${i+1}. ${escHtml(sc.dialogue?.split('\n')[0]||'(chưa có thoại)')}</div>
-      <div class="s-meta">⏱ ${sc.duration}s • 🧍 ${sc.characters.length}${wpCount?` • 📍 ${wpCount}`:''} • 🎵 ${sc.music}</div>
+      <div class="s-meta">⏱ ${sc.duration}s • 🧍 ${sc.characters.length}${wpCount?` • 📍 ${wpCount}`:''}${sfxCount?` • 🔊 ${sfxCount}`:''} • 🎵 ${sc.music}</div>
       ${wpDots?`<div class="wp-strip" title="${wpCount} waypoints">${wpDots}</div>`:''}
       <div class="s-nav">
         <button data-a="left" title="Sang trái">◀</button>
@@ -626,8 +1016,8 @@ function renderTimeline(){
 }
 function escHtml(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function selectScene(i){
-  state.activeScene=i; state.selectedChar=null;
-  syncProps(); renderTimeline(); draw();
+  state.activeScene=i; state.selectedChar=null; state.selectedOverlay=null;
+  syncProps(); renderTimeline(); renderAudioTimeline(); draw();
 }
 function moveScene(from,to){
   const s=state.project.scenes;
@@ -651,6 +1041,99 @@ function dupScene(i){
 function updateTotal(){
   const t = state.project.scenes.reduce((a,s)=>a+s.duration,0);
   $('#totalDur').textContent = `Tổng: ${t}s • ${state.project.scenes.length} scenes`;
+}
+
+// ---------- Audio timeline (SFX per scene) ----------
+function renderAudioTimeline(){
+  const el = $('#audioTimeline');
+  const nameEl = $('#audioSceneName');
+  if (!el) return;
+  const sc = activeSceneObj();
+  if (nameEl) nameEl.textContent = sc ? `Scene ${state.activeScene+1}` : '—';
+  el.innerHTML = '';
+  if (!sc){ el.innerHTML = '<div class="audio-empty">Chưa có scene</div>'; return; }
+  if (!Array.isArray(sc.sfx)) sc.sfx = [];
+  if (!sc.sfx.length){
+    el.innerHTML = '<div class="audio-empty">Chưa có SFX — mở tab 🔊 SFX trong thư viện, double-click để thêm</div>';
+    return;
+  }
+  const dur = sc.duration || 10;
+  // ruler
+  const ruler = document.createElement('div');
+  ruler.className = 'audio-ruler';
+  for (let s = 0; s <= dur; s += Math.max(1, Math.round(dur/10))){
+    const tick = document.createElement('span');
+    tick.style.left = (s/dur*100)+'%';
+    tick.textContent = s+'s';
+    ruler.appendChild(tick);
+  }
+  el.appendChild(ruler);
+  const lane = document.createElement('div');
+  lane.className = 'audio-lane';
+  sc.sfx.forEach(clip=>{
+    const info = (typeof SFXEngine !== 'undefined') ? SFXEngine.info(clip.key) : null;
+    const cDur = clip.loop ? dur - clip.t0 : (clip.dur || 2);
+    const left = Math.min(100, clip.t0/dur*100);
+    const width = Math.min(100 - left, Math.max(3, cDur/dur*100));
+    const d = document.createElement('div');
+    d.className = 'audio-clip' + (clip.loop ? ' loop' : '');
+    d.style.left = left+'%'; d.style.width = width+'%';
+    d.title = `${clip.name} — bắt đầu ${clip.t0}s`;
+    d.innerHTML = `
+      <span class="ac-name">🔊 ${escHtml(clip.name)}</span>
+      <span class="ac-t">${clip.t0.toFixed(1)}s</span>
+      <button class="ac-play" title="Nghe thử">▶</button>
+      <button class="ac-del" title="Xóa">×</button>
+      <div class="ac-vol" title="Âm lượng"><input type="range" min="0" max="100" value="${clip.volume}"></div>`;
+    // play single
+    d.querySelector('.ac-play').addEventListener('click', (e)=>{
+      e.stopPropagation();
+      if (sfxEngine) sfxEngine.play(clip.key, clip.volume/100);
+    });
+    // delete
+    d.querySelector('.ac-del').addEventListener('click', (e)=>{
+      e.stopPropagation();
+      sc.sfx = sc.sfx.filter(x=>x.id!==clip.id);
+      renderAudioTimeline(); renderTimeline(); toast('Đã xóa SFX');
+    });
+    // volume
+    d.querySelector('.ac-vol input').addEventListener('input', (e)=>{
+      clip.volume = +e.target.value;
+    });
+    d.querySelector('.ac-vol input').addEventListener('click', (e)=>e.stopPropagation());
+    // drag to change t0
+    d.addEventListener('mousedown', (e)=>{
+      if (e.target.closest('button') || e.target.closest('input')) return;
+      e.preventDefault();
+      const laneRect = lane.getBoundingClientRect();
+      const startX = e.clientX, startT0 = clip.t0;
+      const mv = (e2)=>{
+        const dx = (e2.clientX - startX) / laneRect.width * dur;
+        clip.t0 = Math.max(0, Math.min(dur - 0.1, +(startT0 + dx).toFixed(1)));
+        d.style.left = Math.min(100, clip.t0/dur*100)+'%';
+        d.querySelector('.ac-t').textContent = clip.t0.toFixed(1)+'s';
+      };
+      const up = ()=>{
+        document.removeEventListener('mousemove', mv);
+        document.removeEventListener('mouseup', up);
+        renderAudioTimeline();
+      };
+      document.addEventListener('mousemove', mv);
+      document.addEventListener('mouseup', up);
+    });
+    lane.appendChild(d);
+  });
+  el.appendChild(lane);
+}
+let _mixHandle = null;
+function togglePreviewMix(){
+  const btn = $('#btnPreviewMix');
+  if (_mixHandle){ _mixHandle.stop(); _mixHandle = null; sfxEngine?.stopAll(); btn.textContent = '▶ Nghe thử mix'; return; }
+  const sc = activeSceneObj();
+  if (!sc || !(sc.sfx||[]).length){ toast('Scene này chưa có SFX'); return; }
+  _mixHandle = sfxEngine.playMix(sc.sfx, sc.duration);
+  btn.textContent = '⏹ Dừng';
+  setTimeout(()=>{ if (_mixHandle){ _mixHandle = null; btn.textContent = '▶ Nghe thử mix'; } }, (sc.duration+1)*1000);
 }
 $('#btnAddScene').addEventListener('click', ()=>{
   state.project.scenes.push(newScene());
@@ -716,6 +1199,45 @@ function validateProject(p){
       c.waypoints.sort((a,b)=>a.t-b.t);
     });
     if(!s.id) s.id=nid('s');
+    // sanitize weather: {rain,snow,fog,dust,leaves} 0-100
+    if (!s.weather || typeof s.weather !== 'object') s.weather = {};
+    WEATHER_IDS.forEach(k=>{
+      let v = Math.round(+s.weather[k] || 0);
+      s.weather[k] = v < 0 ? 0 : v > 100 ? 100 : v;
+    });
+    // sanitize overlays: [{id,type,value,text,x,y,size,t0,t1}]
+    if (!Array.isArray(s.overlays)) s.overlays = [];
+    s.overlays = s.overlays
+      .filter(o=>o && typeof o === 'object')
+      .map(o=>({
+        id: o.id || nid('o'),
+        type: o.type === 'bubble' ? 'bubble' : 'emoji',
+        value: String(o.value || '✨'),
+        text: String(o.text ?? o.value ?? '...'),
+        x: Math.round(+o.x || 0),
+        y: Math.round(+o.y || 0),
+        size: Math.max(16, Math.min(400, Math.round(+o.size || 64))),
+        t0: Math.max(0, +o.t0 || 0),
+        t1: Math.max(0, o.t1 == null ? s.duration : +o.t1),
+      }));
+    // sanitize sfx clips: [{id, key, t0, volume, loop}]
+    if (!Array.isArray(s.sfx)) s.sfx = [];
+    const knownSfx = (k) => (typeof SFX_DUR !== 'undefined') && !!SFX_DUR[k];
+    s.sfx = s.sfx
+      .filter(x=>x && typeof x.key === 'string' && knownSfx(x.key))
+      .map(x=>{
+        const info = (typeof SFXEngine !== 'undefined') ? SFXEngine.info(x.key) : null;
+        const vol = Number.isFinite(+x.volume) ? +x.volume : 80;
+        return {
+          id: x.id || nid('x'),
+          key: x.key,
+          name: info?.n || x.name || x.key,
+          dur: SFX_DUR[x.key] || 2,
+          t0: Math.min(s.duration, Math.max(0, +x.t0 || 0)),
+          volume: Math.min(100, Math.max(0, vol)),
+          loop: !!(x.loop ?? info?.loop),
+        };
+      });
   });
   if(!p.title) p.title='Câu chuyện';
   if(!/^\d+x\d+$/.test(p.size||'')) p.size='1920x1080';
@@ -786,6 +1308,29 @@ function wpPos(c,el){
       let p=(el-a.t)/(b.t-a.t);p=p*p*(3-2*p);
       return{x:a.x+(b.x-a.x)*p,m:true,dx:b.x-a.x};}}
   return{x:k[k.length-1].x,m:false,dx:0};}
+const drawWeather=(${typeof WeatherEngine!=='undefined' ? WeatherEngine.drawWeather.toString() : 'function(){ }'});
+function rrP(c,px,py,pw,ph,r){r=Math.min(r,pw/2,ph/2);c.beginPath();c.moveTo(px+r,py);
+  c.arcTo(px+pw,py,px+pw,py+ph,r);c.arcTo(px+pw,py+ph,px,py+ph,r);
+  c.arcTo(px,py+ph,px,py,r);c.arcTo(px,py,px+pw,py,r);c.closePath();}
+function drawOv(s,el){
+  (s.overlays||[]).forEach(function(ov){
+    if(el<(ov.t0||0)||el>(ov.t1==null?1e9:ov.t1))return;
+    var size=ov.size||64,ox=ov.x==null?W/2:ov.x,oy=ov.y==null?H/2:ov.y;
+    if(ov.type==='emoji'){x.font=size+'px serif';x.textAlign='center';x.textBaseline='middle';
+      x.fillText(ov.value||'✨',ox,oy);}
+    else{var st=ov.value||'speech',fs=Math.max(14,Math.round(size*0.34));
+      x.font='600 '+fs+'px sans-serif';var tw=x.measureText(ov.text||'').width;
+      var pw=tw+size*0.9,ph=fs*2.1,bx=ox-pw/2,by=oy-ph/2;
+      if(st==='shout'){x.fillStyle='#ffeb3b';x.strokeStyle='#d32f2f';x.lineWidth=4;}
+      else{x.fillStyle='rgba(255,255,255,0.96)';x.strokeStyle='#9aa0b4';x.lineWidth=2;}
+      if(st==='thought')x.setLineDash([8,6]);
+      rrP(x,bx,by,pw,ph,size*0.25);x.fill();x.stroke();x.setLineDash([]);
+      x.fillStyle=st==='shout'?'#ffeb3b':'rgba(255,255,255,0.96)';
+      x.beginPath();x.moveTo(ox-14,by+ph-2);x.lineTo(ox+14,by+ph-2);x.lineTo(ox-26,by+ph+30);
+      x.closePath();x.fill();
+      x.fillStyle='#23262e';x.textAlign='center';x.textBaseline='middle';x.fillText(ov.text||'',ox,oy);}
+  });
+}
 function drawScene(s,t,el){
   const bg=BG[s.background],im=bg&&img(bg.file);
   if(im&&im.complete&&im.naturalWidth){const k=Math.max(W/im.naturalWidth,H/im.naturalHeight);
@@ -801,6 +1346,8 @@ function drawScene(s,t,el){
       if(ii&&ii.complete&&ii.naturalWidth){const dh=H*0.42*c.scale,dw=dh*600/900;
         x.drawImage(ii,-dw/2,-dh,dw,dh);}}
     x.restore();});
+  try{drawWeather(x,s.weather||{},el,W,H);}catch(e){}
+  drawOv(s,el);
   sub.textContent=s.dialogue||'';
   document.getElementById('t').textContent='Scene '+(si+1)+'/'+P.scenes.length;
 }
@@ -833,6 +1380,10 @@ $('#btnRender').addEventListener('click', ()=>{
     scenes: state.project.scenes.map(s=>({
       background: BACKGROUNDS[s.background]?.file || s.background,
       duration: s.duration, music: s.music, dialogue: s.dialogue,
+      sfx: (s.sfx||[]).map(x=>({key:x.key, t0:x.t0, volume:x.volume, loop:x.loop})),
+      weather: Object.assign({rain:0,snow:0,fog:0,dust:0,leaves:0}, s.weather),
+      overlays: (s.overlays||[]).map(o=>({type:o.type, value:o.value, text:o.text,
+        x:o.x, y:o.y, size:o.size, t0:o.t0, t1:o.t1})),
       characters: s.characters.map(c=>{
         const d = charDef(c);
         return {name:d.name, sprite:d.file||d.emoji, kind:d.kind,
@@ -861,14 +1412,17 @@ document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click', ()=>{
   state.libTab=t.dataset.tab; renderLibrary();
 }));
 
+$('#btnPreviewMix').addEventListener('click', togglePreviewMix);
+
 // ---------- Sync + init ----------
-function syncAll(){ fitCanvas(); renderLibrary(); syncProps(); renderTimeline(); draw(); }
+function syncAll(){ fitCanvas(); renderLibrary(); syncProps(); renderTimeline(); renderAudioTimeline(); draw(); }
 window.addEventListener('resize', ()=>{ fitCanvas(); draw(); });
 
 // sample starter content
 function seedDemo(){
   const s1 = newScene({background:'bg-park', duration:8, music:'happy',
-    dialogue:'An, Bình, Chi, Dũng — bốn người bạn thân!'});
+    dialogue:'An, Bình, Chi, Dũng — bốn người bạn thân!',
+    weather:{rain:0, snow:0, fog:0, dust:0, leaves:30}});
   s1.characters.push(
     Object.assign(newCharInstance('an', 500, 880), {anim:'walk',
       waypoints:[{x:900,t:2},{x:500,t:4},{x:900,t:6}]}),
@@ -879,12 +1433,14 @@ function seedDemo(){
     Object.assign(newCharInstance('animal:dog', 950, 950), {scale:0.8, anim:'walk'}),
   );
   const s2 = newScene({background:'bg-mountain', duration:8, music:'adventure',
-    dialogue:'Cuối tuần này, chúng ta cùng nhau chinh phục đỉnh núi!'});
+    dialogue:'Cuối tuần này, chúng ta cùng nhau chinh phục đỉnh núi!',
+    weather:{rain:0, snow:0, fog:45, dust:0, leaves:0}});
   s2.characters.push(
     Object.assign(newCharInstance('dung', 700, 880), {anim:'walk'}),
     Object.assign(newCharInstance('an', 950, 900), {anim:'walk'}),
     Object.assign(newCharInstance('animal:bird', 1300, 400), {scale:0.9, anim:'idle'}),
   );
+  s2.overlays.push(Object.assign(newOverlay('emoji','⛰️', 960, 300), {size:96, t0:0, t1:8}));
   state.project.scenes = [s1, s2];
 }
 

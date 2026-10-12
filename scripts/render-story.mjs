@@ -29,6 +29,12 @@
 //       "title": "SCENE TITLE",                    // title card, first 3s
 //       "subtitles": [ { "t0": 1, "t1": 5, "text": "Xin chào" } ],
 //       "cam": { "x": [0, 100], "y": [0, 0], "z": [1, 1] },  // linear cam move (optional)
+//       "weather": { "rain": 60, "snow": 0, "fog": 40, "dust": 0, "leaves": 0 },
+//       "overlays": [                                        // emoji / bubbles
+//         { "type": "emoji", "value": "😢", "x": 960, "y": 400, "size": 72, "t0": 1, "t1": 4 },
+//         { "type": "bubble", "value": "speech", "text": "Xin chào!",
+//           "x": 960, "y": 300, "size": 64, "t0": 0.5, "t1": 3 }
+//       ],
 //       "characters": [
 //         {
 //           "preset": "an",                        // built-in preset (see PRESETS)
@@ -47,13 +53,22 @@
 //     }
 //   ]
 // }
+//
+// Scene SFX (optional):
+//   "scenes": [ { ..., "sfx": [
+//       { "key": "rain", "t0": 0, "volume": 80, "loop": true },
+//       { "key": "thunder", "t0": 2.5, "volume": 90 }
+//   ] } ]
+// SFX keys are synthesized server-side by scripts/sfx-synth.mjs (same recipes
+// as Doodle Studio's Web Audio preview), so no audio files are needed.
 // ============================================================================
 import { chromium } from 'playwright';
 import { readFileSync, mkdirSync, writeFileSync, mkdtempSync, existsSync } from 'fs';
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import { dirname, join, resolve, isAbsolute } from 'path';
 import { fileURLToPath } from 'url';
 import os from 'os';
+import { ensureSfxWav, SFX_DUR } from './sfx-synth.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -97,6 +112,25 @@ function loadEngineScripts() {
   return scripts;
 }
 
+// ---- Load Doodle Studio weather engine (deterministic particles) ----
+// Single source of truth: doodle-studio/js/weather-engine.js
+//   Docker layout: <repo>/studio/js/weather-engine.js   (repo served at /app)
+//   VM layout:     <repo>/../doodle-studio/js/weather-engine.js
+function loadWeatherEngine() {
+  const candidates = [
+    join(REPO_ROOT, 'studio', 'js', 'weather-engine.js'),
+    resolve(REPO_ROOT, '..', 'doodle-studio', 'js', 'weather-engine.js'),
+  ];
+  for (const c of candidates) {
+    if (existsSync(c)) {
+      console.log(`✓ Weather engine loaded: ${c}`);
+      return readFileSync(c, 'utf-8');
+    }
+  }
+  console.log('⚠ Weather engine not found — scene.weather will be ignored');
+  return null;
+}
+
 // ---- Resolve background image path ----
 function resolveBgImage(bgImage, storyDir) {
   const candidates = [
@@ -109,7 +143,7 @@ function resolveBgImage(bgImage, storyDir) {
 }
 
 // ---- Build per-scene HTML page ----
-function buildSceneHtml(scene, story, engineScripts, bgDataUrl, W, H) {
+function buildSceneHtml(scene, story, engineScripts, weatherSrc, bgDataUrl, W, H) {
   const dur = scene.duration;
   const gy = scene.groundY ?? Math.round(H * 0.85);
 
@@ -124,7 +158,9 @@ function buildSceneHtml(scene, story, engineScripts, bgDataUrl, W, H) {
     const emotes = (c.emotes || []).map((e, j) =>
       `{what:${JSON.stringify(e.what)},t0:${e.t0},t1:${e.t1},seed:${seed * 10 + j}}`).join(',');
     return `{
-      const h = new Human(${seed}, { h: ${c.h || 290}, duration: ${dur}, W: ${W}, groundTop: ${gy}, groundBot: ${gy}, x0: ${W / 2} });
+      const cls = ${JSON.stringify(c.kind === 'pet' ? 'Pet' : 'Human')};
+      const petOpt = ${JSON.stringify(c.kind === 'pet' ? { petKind: c.petKind || 'dog' } : {})};
+      const h = new (cls === 'Pet' ? Pet : Human)(${seed}, Object.assign({ h: ${c.h || 290}, duration: ${dur}, W: ${W}, groundTop: ${gy}, groundBot: ${gy}, x0: ${W / 2} }, petOpt));
       Object.assign(h, ${JSON.stringify(attrs)});
       h.tl = ${JSON.stringify(tl)};
       h.emotes = [${emotes}];
@@ -154,6 +190,7 @@ function buildSceneHtml(scene, story, engineScripts, bgDataUrl, W, H) {
 <style>html,body{margin:0;padding:0;background:#000}canvas{display:block}</style></head>
 <body><canvas id="cv" width="${W}" height="${H}"></canvas>
 <script>${engineScripts}<\/script>
+${weatherSrc ? `<script>${weatherSrc}<\/script>` : '<script>window.WeatherEngine=null;<\/script>'}
 <script>
 (function(){
 const W = ${W}, H = ${H}, DUR = ${dur};
@@ -164,8 +201,53 @@ ${charBlocks}
 ${bgJs}
 const __subs = ${JSON.stringify(scene.subtitles || [])};
 const __title = ${JSON.stringify(scene.title || '')};
+const __weather = ${JSON.stringify(scene.weather || {})};
+const __overlays = ${JSON.stringify(scene.overlays || [])};
 const camFn = ${camJs};
 const __bgColor = ${JSON.stringify(bgColor)};
+
+function __rrPath(c, px, py, pw, ph, r){
+  r = Math.min(r, pw/2, ph/2);
+  c.beginPath();
+  c.moveTo(px+r, py);
+  c.arcTo(px+pw, py, px+pw, py+ph, r);
+  c.arcTo(px+pw, py+ph, px, py+ph, r);
+  c.arcTo(px, py+ph, px, py, r);
+  c.arcTo(px, py, px+pw, py, r);
+  c.closePath();
+}
+function __drawOverlays(t){
+  for (const ov of __overlays){
+    const t0 = ov.t0 || 0, t1 = (ov.t1 == null ? DUR : ov.t1);
+    if (t < t0 || t > t1) continue;
+    const size = ov.size || 64;
+    const ox = (ov.x == null ? W/2 : ov.x), oy = (ov.y == null ? H/2 : ov.y);
+    if (ov.type === 'emoji'){
+      ctx.font = size + 'px serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(ov.value || '✨', ox, oy);
+    } else {
+      const st = ov.value || 'speech';
+      const fs = Math.max(14, Math.round(size * 0.34));
+      ctx.font = '600 ' + fs + 'px "DejaVu Sans", sans-serif';
+      const tw = ctx.measureText(ov.text || '').width;
+      const pw = tw + size * 0.9, ph = fs * 2.1;
+      const bx = ox - pw/2, by = oy - ph/2;
+      if (st === 'shout'){ ctx.fillStyle = '#ffeb3b'; ctx.strokeStyle = '#d32f2f'; ctx.lineWidth = 4; }
+      else { ctx.fillStyle = 'rgba(255,255,255,0.96)'; ctx.strokeStyle = '#555a66'; ctx.lineWidth = 2; }
+      if (st === 'thought') ctx.setLineDash([8, 6]);
+      __rrPath(ctx, bx, by, pw, ph, size * 0.25);
+      ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = st === 'shout' ? '#ffeb3b' : 'rgba(255,255,255,0.96)';
+      ctx.beginPath();
+      ctx.moveTo(ox - 14, by + ph - 2); ctx.lineTo(ox + 14, by + ph - 2); ctx.lineTo(ox - 26, by + ph + 30);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#23262e';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(ov.text || '', ox, oy);
+    }
+  }
+}
 
 window.__seek = function(t){
   // --- background ---
@@ -182,6 +264,13 @@ window.__seek = function(t){
   ctx.translate(W/2, H/2); ctx.scale(cam.z, cam.z); ctx.translate(-W/2 - cam.x, -H/2 - cam.y);
   for (const h of window.__chars) h.draw(ctx, t, 1);
   ctx.restore();
+  // --- weather particles (deterministic; screen space) ---
+  try {
+    if (window.WeatherEngine && window.WeatherEngine.drawWeather)
+      window.WeatherEngine.drawWeather(ctx, __weather, t, W, H);
+  } catch (e) { /* weather optional */ }
+  // --- emoji / bubble overlays (screen space) ---
+  __drawOverlays(t);
   // --- title card (first 3s) ---
   if (__title && t < 3) {
     const fs = Math.round(H * 0.055);
@@ -237,6 +326,7 @@ async function main() {
   console.log(`Story: ${story.title || '(untitled)'} — ${W}x${H} @${fps}fps, ${story.scenes.length} scenes`);
 
   const engineScripts = loadEngineScripts();
+  const weatherSrc = loadWeatherEngine();
   const ONLY = process.env.ONLY || null;
   const TEST_SHOTS = process.env.TEST_SHOTS === '1';
 
@@ -260,7 +350,7 @@ async function main() {
     }
 
     await page.goto('about:blank');   // reset JS realm between scenes
-    await page.setContent(buildSceneHtml(scene, story, engineScripts, bgDataUrl, W, H));
+    await page.setContent(buildSceneHtml(scene, story, engineScripts, weatherSrc, bgDataUrl, W, H));
     await page.waitForFunction('window.__sceneReady === true', { timeout: 20000 });
     if (bgDataUrl) {
       await page.waitForFunction('window.__bgReady === true', { timeout: 30000 });
@@ -298,14 +388,79 @@ async function main() {
 
   const listFile = join(tmpRoot, 'list.txt');
   writeFileSync(listFile, segFiles.map(s => `file '${s}'`).join('\n'));
-  let cmd = `ffmpeg -y -v error -f concat -safe 0 -i "${listFile}" -c copy "${resolve(process.cwd(), outPath)}"`;
-  if (story.audio) {
-    const audioAbs = isAbsolute(story.audio) ? story.audio : resolve(storyDir, story.audio);
-    cmd = `ffmpeg -y -v error -f concat -safe 0 -i "${listFile}" -i "${audioAbs}" ` +
-      `-c:v copy -c:a aac -shortest "${resolve(process.cwd(), outPath)}"`;
+
+  // ---- Audio: mix per-scene SFX (+ optional music) into one track ----
+  const mixedAudio = buildMixedAudio(story, storyDir, tmpRoot);
+
+  const outAbs = resolve(process.cwd(), outPath);
+  if (mixedAudio) {
+    execFileSync('ffmpeg', ['-y', '-v', 'error',
+      '-f', 'concat', '-safe', '0', '-i', listFile,
+      '-i', mixedAudio,
+      '-c:v', 'copy', '-c:a', 'aac', '-shortest', outAbs],
+      { stdio: 'inherit' });
+  } else {
+    execSync(`ffmpeg -y -v error -f concat -safe 0 -i "${listFile}" -c copy "${outAbs}"`);
   }
-  execSync(cmd);
   console.log(`\n✅ Done: ${outPath}`);
+}
+
+/**
+ * Build a single mixed audio track for the whole story:
+ *   - per-scene SFX clips: [{key, t0, volume(0-100), loop}] at absolute time
+ *   - optional story.audio (music file) looped under everything at 40% volume
+ * Returns path to a WAV file, or null if there is no audio at all.
+ */
+function buildMixedAudio(story, storyDir, tmpRoot){
+  const clips = [];
+  let t = 0;
+  for (const scene of story.scenes){
+    for (const s of (scene.sfx || [])){
+      if (!s || !s.key || !SFX_DUR[s.key]) continue;
+      clips.push({
+        key: s.key,
+        at: t + Math.max(0, +s.t0 || 0),
+        vol: Math.min(1, Math.max(0, (+s.volume ?? 80) / 100)),
+        loop: !!s.loop,
+        sceneRemain: scene.duration - Math.max(0, +s.t0 || 0),
+      });
+    }
+    t += scene.duration;
+  }
+  const totalDur = t;
+  const hasMusic = !!story.audio;
+  if (!clips.length && !hasMusic) return null;
+
+  const sfxDir = join(tmpRoot, 'sfx');
+  mkdirSync(sfxDir, { recursive: true });
+
+  const args = ['-y', '-v', 'error'];
+  const fc = [];
+  let idx = 0;
+
+  for (const c of clips){
+    const wav = ensureSfxWav(c.key, sfxDir);
+    const natDur = SFX_DUR[c.key] || 2;
+    if (c.loop){
+      const plays = Math.max(1, Math.ceil(c.sceneRemain / natDur));
+      if (plays > 1) args.push('-stream_loop', String(plays - 1));
+    }
+    args.push('-i', wav);
+    const ms = Math.round(c.at * 1000);
+    fc.push(`[${idx}:a]aresample=44100,adelay=${ms},volume=${c.vol.toFixed(3)},atrim=0:${totalDur.toFixed(2)}[a${idx}]`);
+    idx++;
+  }
+  if (hasMusic){
+    const audioAbs = isAbsolute(story.audio) ? story.audio : resolve(storyDir, story.audio);
+    args.push('-stream_loop', '-1', '-i', audioAbs);
+    fc.push(`[${idx}:a]aresample=44100,atrim=0:${totalDur.toFixed(2)},volume=0.4[mus]`);
+    idx++;
+  }
+  const mixIns = clips.map((_, i)=>`[a${i}]`).join('') + (hasMusic ? '[mus]' : '');
+  fc.push(`${mixIns}amix=inputs=${idx}:duration=first:dropout_transition=0,aformat=channel_layouts=stereo[aout]`);
+  args.push('-filter_complex', fc.join(';'), '-map', '[aout]', '-c:a', 'pcm_s16le', join(tmpRoot, 'mixed.wav'));
+  execFileSync('ffmpeg', args, { stdio: 'inherit' });
+  return join(tmpRoot, 'mixed.wav');
 }
 
 main().catch(e => { console.error('FATAL:', e.message); process.exit(1); });

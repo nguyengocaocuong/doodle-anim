@@ -33,8 +33,10 @@
       <button class="tab active" data-tab="humans">🧑 Nhân vật</button>
       <button class="tab" data-tab="animals">🐾 Động vật</button>
       <button class="tab" data-tab="bgs">🏞️ Bối cảnh</button>
+      <button class="tab" data-tab="fx">✨ FX</button>
+      <button class="tab" data-tab="sfx">🔊 SFX</button>
     </div>
-    <div class="lib-hint">Kéo thả vào canvas để thêm</div>
+    <div class="lib-hint" id="libHint">Kéo thả vào canvas để thêm</div>
     <div id="libGrid" class="lib-grid"></div>
   </aside>
 
@@ -45,7 +47,10 @@
       <span id="canvasHint">Kéo nhân vật từ thư viện vào • Kéo để di chuyển • Click để chọn • Del để xóa • Shift+Click: thêm waypoint</span>
     </div>
     <div id="stageScroll">
-      <canvas id="stage"></canvas>
+      <div id="stageBox">
+        <canvas id="stage"></canvas>
+        <canvas id="fxCanvas"></canvas>
+      </div>
     </div>
     <div id="subtitleBar"></div>
   </section>
@@ -124,11 +129,19 @@
     <button id="btnAddScene" class="btn primary small">＋ Thêm scene</button>
   </div>
   <div id="timeline"></div>
+  <div id="audioHead">
+    <strong>🔊 Audio — <span id="audioSceneName">Scene 1</span></strong>
+    <span class="audio-hint">Double-click SFX trong thư viện để thêm • kéo clip để đổi thời điểm</span>
+    <button id="btnPreviewMix" class="btn small" title="Nghe thử mix âm thanh của scene hiện tại">▶ Nghe thử mix</button>
+  </div>
+  <div id="audioTimeline"></div>
 </footer>
 
 <div id="toast"></div>
 <input type="file" id="fileImport" accept=".json,application/json" hidden>
 
+<script src="js/sfx-engine.js"></script>
+<script src="js/weather-engine.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
