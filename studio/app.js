@@ -40,7 +40,29 @@ const BACKGROUNDS = {
   'bg-dorm':     {name:'Phòng trọ',        file:'assets/bg-dorm.png'},
   'bg-road':     {name:'Đường xuống núi',  file:'assets/bg-road.png'},
 };
-const ANIMS = {idle:'Đứng yên', walk:'Đi bộ', jump:'Nhảy', celebrate:'Ăn mừng'};
+const ANIMS = {idle:'Đứng yên', walk:'Đi bộ', jump:'Nhảy', celebrate:'Ăn mừng',
+  cry:'😢 Khóc', kneel:'🧎 Quỳ', sweep:'🧹 Quét', bow:'🙇 Cúi chào', point:'👉 Chỉ tay', angry:'😠 Tức giận',
+  punch:'👊 Đấm thẳng', punch_hook:'🥊 Đấm móc', kick:'🦵 Đá thẳng', kick_round:'🌀 Đá vòng',
+  block:'🛡️ Đỡ đòn', dodge:'💨 Né tránh', fall:'💥 Ngã xuống',
+  handshake:'🤝 Bắt tay', hug:'🫂 Ôm', pat:'👋 Vỗ vai', give:'🎁 Đưa đồ', push:'🫷 Đẩy', pull:'🫴 Kéo về'};
+
+// ---------- Transitions between scenes ----------
+// Stored on each scene as `transition:{type,duration}` = transition INTO this scene.
+// Scene 0's transition is ignored. Rendered by scripts/render-story.mjs (ffmpeg xfade).
+const TRANSITIONS = {
+  none:    {name:'✂️ Cắt cứng', desc:'Chuyển ngay, không hiệu ứng'},
+  fade:    {name:'🌫️ Mờ dần',   desc:'Hai scene mờ qua lại'},
+  wipe:    {name:'➡️ Quét ngang', desc:'Màn quét từ phải sang trái'},
+  slide:   {name:'⏩ Trượt',      desc:'Scene mới trượt vào từ phải'},
+  zoom:    {name:'🔍 Phóng to',   desc:'Zoom vào scene mới + mờ dần'},
+  iris:    {name:'⭕ Vòng tròn',  desc:'Vòng tròn mở ra scene mới'},
+  dissolve:{name:'✨ Tan biến',   desc:'Điểm ảnh tan dần qua lại'},
+};
+function normTransUI(t){
+  const type = (t && TRANSITIONS[t.type]) ? t.type : 'none';
+  const duration = Math.min(2, Math.max(0.3, +((t && t.duration) || 0.8)));
+  return {type, duration};
+}
 
 // ---------- Weather / FX catalog ----------
 const WEATHER_IDS = ['rain','snow','fog','dust','leaves'];
@@ -72,6 +94,8 @@ const state = {
   activeScene: 0,
   selectedChar: null,   // instance id
   selectedOverlay: null, // overlay id
+  selectedProp: null,   // prop instance id
+  dragProp: null,
   dragOverlay: null,
   playing: false,
   playSceneIdx: 0,
@@ -83,6 +107,52 @@ const state = {
   wpMode: false,        // waypoint-add mode: plain clicks add waypoints
   wpHit: [],            // waypoint marker hit-test list (project coords)
 };
+
+// ---------- Undo / Redo (snapshot-based) ----------
+// pushHistory() must be called BEFORE any mutation of state.project.
+// A 500ms throttle coalesces rapid-fire events (slider drags, focus+pointerdown).
+const hist = { undo: [], redo: [], cap: 50, _lastPush: 0 };
+function pushHistory(){
+  const now = Date.now();
+  if (now - hist._lastPush < 500) return;
+  hist._lastPush = now;
+  hist.undo.push(JSON.stringify(state.project));
+  if (hist.undo.length > hist.cap) hist.undo.shift();
+  hist.redo.length = 0;
+  updateUndoBtns();
+}
+function afterHistoryRestore(){
+  if (state.activeScene >= state.project.scenes.length) state.activeScene = 0;
+  state.selectedChar = null; state.selectedOverlay = null; state.selectedProp = null;
+  if (state.playing) stopPreview();
+  syncAll(); updateUndoBtns();
+}
+function undo(){
+  if (!hist.undo.length){ toast('Không có gì để undo'); return; }
+  hist.redo.push(JSON.stringify(state.project));
+  state.project = JSON.parse(hist.undo.pop());
+  afterHistoryRestore(); toast('↩️ Undo');
+}
+function redo(){
+  if (!hist.redo.length){ toast('Không có gì để redo'); return; }
+  hist.undo.push(JSON.stringify(state.project));
+  state.project = JSON.parse(hist.redo.pop());
+  afterHistoryRestore(); toast('↪️ Redo');
+}
+function updateUndoBtns(){
+  const u = $('#btnUndo'), r = $('#btnRedo');
+  if (u) u.disabled = !hist.undo.length;
+  if (r) r.disabled = !hist.redo.length;
+  if (u) u.title = `Hoàn tác (Ctrl+Z) — ${hist.undo.length} bước`;
+  if (r) r.title = `Làm lại (Ctrl+Shift+Z) — ${hist.redo.length} bước`;
+}
+// Arm an input so the first user interaction snapshots state before mutation.
+function armUndo(el){
+  if (!el || el._undoArmed) return;
+  el._undoArmed = true;
+  el.addEventListener('pointerdown', ()=>pushHistory(), {passive:true});
+  el.addEventListener('focus', ()=>pushHistory());
+}
 
 const $ = (s) => document.querySelector(s);
 const canvas = $('#stage');
@@ -118,11 +188,15 @@ function newScene(over={}){
     background: 'bg-park',
     duration: 10,
     music: 'none',
+    title: '',       // title card (hiện 3s đầu khi render)
     dialogue: '',
+    transition: {type:'none', duration:0.8},  // transition INTO this scene (scene 0 ignored)
     characters: [],
+    props: [],  // [{id, asset, x, y, scale}]
     sfx: [],   // [{id, key, name, t0, volume(0-100), loop}]
     weather: {rain:0, snow:0, fog:0, dust:0, leaves:0},  // 0-100 per effect
     overlays: [], // [{id, type:'emoji'|'bubble', value/text, x, y, size, t0, t1}]
+    cam: null,  // {t:[s], x:[px], y:[px], z:[zoom]} keyframes, or null
   }, over);
 }
 function newSfxClip(key){
@@ -170,9 +244,12 @@ function renderLibrary(){
     ? '▶ bấm để nghe thử • double-click để thêm vào scene'
     : state.libTab === 'fx'
     ? '🌦️ bật/tắt hiệu ứng thời tiết • 😀 click emoji để thêm vào canvas'
+    : state.libTab === 'props'
+    ? '🔍 tìm theo tên/tag • kéo thả hoặc click để thêm vào canvas'
     : 'Kéo thả vào canvas để thêm';
   if (state.libTab === 'sfx'){ renderSfxLibrary(grid); }
   else if (state.libTab === 'fx'){ renderFxTab(grid); }
+  else if (state.libTab === 'props'){ renderPropsTab(grid); }
   else {
   const mk = (key, label, innerHTML, extra='') => {
     const d = document.createElement('div');
@@ -235,7 +312,9 @@ function renderFxTab(grid){
     const chk = row.querySelector('input[type=checkbox]');
     const rng = row.querySelector('input[type=range]');
     const valEl = row.querySelector('.wx-val');
+    armUndo(rng);
     const apply = ()=>{
+      pushHistory();
       const v = chk.checked ? Math.max(5, +rng.value) : 0;
       if (chk.checked && +rng.value === 0){ rng.value = 40; }
       sc.weather[def.id] = chk.checked ? +rng.value : 0;
@@ -266,6 +345,7 @@ function renderFxTab(grid){
     const b = document.createElement('button');
     b.className = 'emoji-btn'; b.textContent = e; b.title = 'Thêm ' + e;
     b.addEventListener('click', ()=>{
+      pushHistory();
       const {w,h} = projSize();
       const ov = newOverlay('emoji', e, w/2 + (Math.random()*120-60), h*0.45);
       sc.overlays.push(ov);
@@ -287,6 +367,7 @@ function renderFxTab(grid){
     b.className = 'bubble-btn';
     b.innerHTML = `${st.name}<br><small>${st.desc} — click để thêm</small>`;
     b.addEventListener('click', ()=>{
+      pushHistory();
       const {w,h} = projSize();
       const ov = newOverlay('bubble', st.id, w/2, h*0.32);
       ov.text = st.id === 'thought' ? 'Đang nghĩ...' : st.id === 'shout' ? 'Này!' : 'Xin chào!';
@@ -328,12 +409,14 @@ function renderFxTab(grid){
       renderFxTab(grid);
     });
     row.querySelector('.ovl-del').addEventListener('click', ()=>{
+      pushHistory();
       sc.overlays = sc.overlays.filter(x=>x.id !== ov.id);
       if (state.selectedOverlay === ov.id) state.selectedOverlay = null;
       renderFxTab(grid); renderTimeline();
       toast('Đã xóa overlay');
     });
     row.querySelectorAll('[data-k]').forEach(inp=>{
+      armUndo(inp);
       inp.addEventListener('change', ()=>{
         const k = inp.dataset.k;
         if (k === 'text') ov.text = inp.value;
@@ -348,6 +431,112 @@ function renderFxTab(grid){
   });
   grid.appendChild(oSec);
   grid.style.display = '';
+}
+
+// ---------- Props (asset library) tab ----------
+const PROP_CATS = {nature:'🌿 Thiên nhiên', home:'🏠 Đồ gia dụng', vehicle:'🛵 Phương tiện', house:'🏘️ Nhà cửa', tools:'🧰 Đồ dùng'};
+let PROPS_CATALOG = null, propCatFilter = 'all', propSearch = '';
+fetch('assets/props/catalog.json').then(r=>r.json()).then(c=>{
+  PROPS_CATALOG = c;
+  if (state.libTab==='props') renderLibrary();
+}).catch(()=>{});
+
+function propDef(id){ return (PROPS_CATALOG||[]).find(p=>p.id===id); }
+function newPropInstance(assetId, x, y){
+  return { id: nid('p'), asset: assetId, x, y, scale: 1.0 };
+}
+function getSelProp(){ return activeSceneObj()?.props?.find(p=>p.id===state.selectedProp); }
+function addPropToScene(assetId, x, y){
+  const sc = activeSceneObj(); if(!sc) return;
+  if (!Array.isArray(sc.props)) sc.props = [];
+  const {w, h} = projSize();
+  const inst = newPropInstance(assetId,
+    x != null ? Math.round(x) : Math.round(w/2),
+    y != null ? Math.round(y) : Math.round(h*0.72));
+  pushHistory();
+  sc.props.push(inst);
+  state.selectedProp = inst.id; state.selectedChar = null; state.selectedOverlay = null; state.selectedProp = null;
+  syncProps(); draw(); renderTimeline();
+  toast('Đã thêm: ' + (propDef(assetId)?.name || assetId));
+}
+function renderPropsTab(grid){
+  grid.style.display = '';
+  if (!PROPS_CATALOG){
+    grid.innerHTML = '<div class="lib-empty">Đang tải asset library…</div>'; return;
+  }
+  const wrap = document.createElement('div'); wrap.className = 'props-wrap';
+  const sbox = document.createElement('input');
+  sbox.className = 'props-search'; sbox.placeholder = '🔍 Tìm: xe máy, nón lá, mặt trời…';
+  sbox.value = propSearch;
+  sbox.addEventListener('input', ()=>{ propSearch = sbox.value; renderPropsGrid(); });
+  sbox.addEventListener('click', (e)=>e.stopPropagation());
+  sbox.addEventListener('mousedown', (e)=>e.stopPropagation());
+  const chips = document.createElement('div'); chips.className = 'props-cats';
+  const mkChip = (id, label)=>{
+    const b = document.createElement('button');
+    b.className = 'chip' + (propCatFilter===id ? ' active' : '');
+    b.textContent = label;
+    b.addEventListener('click', ()=>{ propCatFilter = id; renderPropsTab(grid); });
+    chips.appendChild(b);
+  };
+  mkChip('all', 'Tất cả');
+  for (const [id, label] of Object.entries(PROP_CATS)) mkChip(id, label);
+  const g = document.createElement('div'); g.className = 'props-grid'; g.id = 'propsGrid';
+  wrap.appendChild(sbox); wrap.appendChild(chips); wrap.appendChild(g);
+  grid.innerHTML = ''; grid.appendChild(wrap);
+  renderPropsGrid();
+}
+function renderPropsGrid(){
+  const g = document.getElementById('propsGrid'); if(!g || !PROPS_CATALOG) return;
+  g.innerHTML = '';
+  const q = propSearch.trim().toLowerCase();
+  const items = PROPS_CATALOG.filter(p =>
+    (propCatFilter==='all' || p.category===propCatFilter) &&
+    (!q || p.name.toLowerCase().includes(q) || (p.tags||[]).some(t=>t.toLowerCase().includes(q))));
+  if (!items.length){ g.innerHTML = '<div class="lib-empty">Không tìm thấy asset nào.</div>'; return; }
+  for (const p of items){
+    const d = document.createElement('div');
+    d.className = 'lib-item prop-item'; d.draggable = true;
+    d.title = p.name;
+    d.innerHTML = `<img src="assets/${p.file}" alt="${p.name}" loading="lazy" draggable="false"><div class="name">${p.name}</div>`;
+    d.addEventListener('dragstart', (e)=>{
+      e.dataTransfer.setData('text/plain', JSON.stringify({kind:'props', key:p.id}));
+      e.dataTransfer.effectAllowed = 'copy';
+    });
+    d.addEventListener('click', ()=>addPropToScene(p.id));
+    g.appendChild(d);
+  }
+}
+function propBox(inst){
+  const s = 170 * (inst.scale || 1);
+  return { w: s, h: s };
+}
+function propAt(px, py){
+  const sc = activeSceneObj(); if(!sc || !sc.props) return null;
+  const ps = [...sc.props].sort((a,b)=>b.y-a.y); // top-most first
+  return ps.find(p=>{
+    const b = propBox(p);
+    return Math.abs(px-p.x) <= b.w/2+12 && py >= p.y-b.h-12 && py <= p.y+16;
+  }) || null;
+}
+function deleteSelectedProp(){
+  const sc = activeSceneObj(); if(!sc || !state.selectedProp || !sc.props) return;
+  pushHistory();
+  sc.props = sc.props.filter(p=>p.id!==state.selectedProp);
+  state.selectedProp = null;
+  syncProps(); draw(); renderTimeline(); toast('Đã xóa đồ vật');
+}
+function syncPropProps(){
+  const inst = getSelProp();
+  $('#propProps').style.display = inst ? 'block' : 'none';
+  if (!inst) return;
+  const def = propDef(inst.asset);
+  $('#propPropName').textContent = def?.name || inst.asset;
+  $('#propThumb').innerHTML = def ? `<img src="assets/${def.file}" alt="">` : '';
+  if (document.activeElement!==$('#ppropX')) $('#ppropX').value = Math.round(inst.x);
+  if (document.activeElement!==$('#ppropY')) $('#ppropY').value = Math.round(inst.y);
+  $('#ppropScale').value = inst.scale;
+  $('#pscaleVal').textContent = Number(inst.scale).toFixed(1);
 }
 
 // ---------- SFX library tab ----------
@@ -391,6 +580,7 @@ function renderSfxLibrary(grid){
 
 function addSfxToScene(key){
   const sc = activeSceneObj(); if(!sc) return;
+  pushHistory();
   if (!Array.isArray(sc.sfx)) sc.sfx = [];
   const clip = newSfxClip(key);
   sc.sfx.push(clip);
@@ -400,6 +590,7 @@ function addSfxToScene(key){
 
 function addCharToScene(charKey, kind){
   const sc = activeSceneObj(); if(!sc) return;
+  pushHistory();
   const {w,h} = projSize();
   const inst = newCharInstance(kind==='animals' ? 'animal:'+charKey : charKey, Math.round(w/2), Math.round(h*0.82));
   sc.characters.push(inst);
@@ -489,6 +680,7 @@ function addWaypoint(inst, x){
   const wps = inst.waypoints;
   const lastT = wps.length ? wps[wps.length-1].t : 0;
   if (lastT >= sc.duration){ toast('Scene đã hết thời gian — tăng duration hoặc sửa waypoint'); return; }
+  pushHistory();
   const t = Math.min(sc.duration, +(lastT + 2).toFixed(1));
   wps.push({x, t});
   sortWps(inst);
@@ -546,6 +738,25 @@ function drawAnimOffset(anim, t, seed){
     case 'walk':      return {dy: Math.abs(s(T*7))*14, rot: s(T*7)*0.04};
     case 'jump':      { const ph=(T*1.2)%1; return {dy: -Math.sin(ph*Math.PI)*90, rot:0}; }
     case 'celebrate': { const ph=(T*1.6)%1; return {dy: -Math.abs(Math.sin(ph*Math.PI))*70, rot: s(T*10)*0.12}; }
+    case 'cry':       return {dy: Math.abs(s(T*8))*4, rot: 0.06};
+    case 'kneel':     return {dy: 26, rot: 0};
+    case 'sweep':     return {dy: Math.abs(s(T*4))*5, rot: s(T*4)*0.08};
+    case 'bow':       return {dy: 8, rot: 0.35};
+    case 'point':     return {dy: 0, rot: -0.06};
+    case 'angry':     { const stomp=Math.abs(s(T*5.2))>0.72?1:0; return {dy: -stomp*8, rot: -0.03}; }
+    case 'punch':     return {dy: -Math.abs(s(T*6.3))*10, rot: s(T*6.3)*0.05};
+    case 'punch_hook':return {dy: -Math.abs(s(T*5.7))*12, rot: s(T*5.7)*0.07};
+    case 'kick':      return {dy: -Math.abs(s(T*5.7))*18, rot: s(T*5.7)*0.06};
+    case 'kick_round':return {dy: -Math.abs(s(T*5.2))*16, rot: s(T*5.2)*0.08};
+    case 'block':     return {dy: 6, rot: -0.04};
+    case 'dodge':     return {dy: 0, rot: s(T*5)*0.16};
+    case 'fall':      return {dy: 34, rot: 0.55};
+    case 'handshake': return {dy: s(T*9)*3, rot: -0.03};
+    case 'hug':       return {dy: s(T*2)*4, rot: s(T*2)*0.03};
+    case 'pat':       return {dy: s(T*7)*3, rot: -0.05};
+    case 'give':      return {dy: 4, rot: 0.08};
+    case 'push':      return {dy: s(T*5.2)*6, rot: s(T*5.2)*0.06};
+    case 'pull':      return {dy: 2, rot: -0.08};
     default:          return {dy: s(T*1.8)*5, rot: s(T*1.3)*0.015}; // idle breathing
   }
 }
@@ -568,6 +779,37 @@ function draw(){
       ctx.fillStyle = '#1a1d26'; ctx.fillRect(0,0,w,h);
     }
   }
+
+  // props (asset library) — drawn under characters, sorted by y
+  const props = [...(sc.props||[])].sort((a,b)=>a.y-b.y);
+  props.forEach((p)=>{
+    const def = propDef(p.asset);
+    const b = propBox(p);
+    const im = def ? loadImg('assets/' + def.file) : null;
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    const isSel = p.id===state.selectedProp;
+    if (im && im.complete && im.naturalWidth){
+      ctx.drawImage(im, -b.w/2, -b.h, b.w, b.h);
+    } else {
+      ctx.fillStyle = '#3a4152';
+      ctx.fillRect(-b.w/2, -b.h, b.w, b.h);
+    }
+    if (isSel){
+      ctx.strokeStyle = '#34d399'; ctx.lineWidth = 3;
+      ctx.setLineDash([10,6]);
+      ctx.strokeRect(-b.w/2-8, -b.h-8, b.w+16, b.h+16);
+      ctx.setLineDash([]);
+      ctx.font = `600 ${Math.max(20,h*0.022)}px sans-serif`;
+      const nm = def?.name || p.asset;
+      const tw = ctx.measureText(nm).width;
+      ctx.fillStyle='rgba(52,211,153,.92)';
+      ctx.fillRect(-tw/2-10, -b.h-52, tw+20, 34);
+      ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(nm, 0, -b.h-35);
+    }
+    ctx.restore();
+  });
 
   // waypoint path overlay (edit mode, selected character)
   state.wpHit = [];
@@ -628,6 +870,33 @@ function draw(){
       ctx.restore();
     }
   });
+
+  // camera viewport overlay (edit aid) — matches render camFn transform
+  if (state.showCam !== false){
+    const keys = camKeys(sc);
+    if (keys.length){
+      const tNow = (state.playing && state.playElapsed != null) ? state.playElapsed : 0;
+      const c = camAt(sc, tNow);
+      const rw = w / c.z, rh = h / c.z;
+      const cx = w/2 + c.x, cy = h/2 + c.y;
+      const rx = cx - rw/2, ry = cy - rh/2;
+      ctx.save();
+      // dim outside the frame
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      ctx.fillRect(0, 0, w, Math.max(0, ry));
+      ctx.fillRect(0, Math.min(h, ry+rh), w, Math.max(0, h-(ry+rh)));
+      ctx.fillRect(0, Math.max(0, ry), Math.max(0, rx), Math.min(h, ry+rh)-Math.max(0, ry));
+      ctx.fillRect(Math.min(w, rx+rw), Math.max(0, ry), Math.max(0, w-(rx+rw)), Math.min(h, ry+rh)-Math.max(0, ry));
+      // frame border
+      ctx.strokeStyle = '#ffd166'; ctx.lineWidth = 3; ctx.setLineDash([14, 8]);
+      ctx.strokeRect(rx, ry, rw, rh);
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#ffd166';
+      ctx.font = '600 22px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      ctx.fillText(`🎥 z=${c.z.toFixed(2)} t=${tNow.toFixed(1)}s`, rx+10, ry+8);
+      ctx.restore();
+    }
+  }
 
   // subtle ground shadow for selected
   updateSubtitle();
@@ -750,6 +1019,7 @@ function loop(ts){
           state.activeScene = state.playSceneIdx;
           state.playT0 = ts;
           syncProps(); renderTimeline();
+          flashTransition(state.project.scenes[state.playSceneIdx]);
         } else {
           stopPreview(); toast('Preview xong');
         }
@@ -779,6 +1049,7 @@ canvas.addEventListener('mousedown', (e)=>{
   if (!state.playing){
     const ovHit = overlayAt(p.x, p.y);
     if (ovHit){
+      pushHistory();
       state.selectedOverlay = ovHit.id;
       state.dragOverlay = ovHit;
       state.dragOffset = {x: ovHit.x - p.x, y: ovHit.y - p.y};
@@ -789,8 +1060,19 @@ canvas.addEventListener('mousedown', (e)=>{
     }
     state.selectedOverlay = null;
   }
+  const propHit = propAt(p.x,p.y);
+  if (propHit){
+    pushHistory();
+    state.selectedProp = propHit.id; state.selectedChar = null;
+    state.dragProp = propHit;
+    state.dragOffset = {x: propHit.x-p.x, y: propHit.y-p.y};
+    canvas.style.cursor='grabbing';
+    syncProps(); draw(); return;
+  }
+  state.selectedProp = null;
   const hit = charAt(p.x,p.y);
   if (hit){
+    pushHistory();
     state.selectedChar = hit.id;
     state.dragChar = hit;
     state.dragOffset = {x: hit.x-p.x, y: hit.y-p.y};
@@ -808,6 +1090,7 @@ canvas.addEventListener('contextmenu', (e)=>{
   if (m){
     const inst = activeSceneObj()?.characters.find(c=>c.id===m.instId);
     if (inst && inst.waypoints){
+      pushHistory();
       inst.waypoints.splice(m.idx, 1);
       sortWps(inst);
       syncWaypointList(); draw(); renderTimeline();
@@ -825,6 +1108,16 @@ window.addEventListener('mousemove', (e)=>{
     state.dragOverlay.y = Math.round(Math.min(h,Math.max(0,p.y+state.dragOffset.y)));
     return; // fx layer redraws every frame via loop()
   }
+  if (state.dragProp){
+    const r = canvas.getBoundingClientRect();
+    if (e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom) return;
+    const p = toProj(e);
+    const {w,h} = projSize();
+    state.dragProp.x = Math.round(Math.min(w,Math.max(0,p.x+state.dragOffset.x)));
+    state.dragProp.y = Math.round(Math.min(h,Math.max(0,p.y+state.dragOffset.y)));
+    syncPropProps(); draw();
+    return;
+  }
   if (!state.dragChar) return;
   const r = canvas.getBoundingClientRect();
   if (e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom) return;
@@ -834,7 +1127,7 @@ window.addEventListener('mousemove', (e)=>{
   state.dragChar.y = Math.round(Math.min(h,Math.max(0,p.y+state.dragOffset.y)));
   syncCharProps(); draw();
 });
-window.addEventListener('mouseup', ()=>{ state.dragChar=null; state.dragOverlay=null; canvas.style.cursor='default'; });
+window.addEventListener('mouseup', ()=>{ state.dragChar=null; state.dragOverlay=null; state.dragProp=null; canvas.style.cursor='default'; });
 
 // drop from library
 canvas.addEventListener('dragover', (e)=>{ e.preventDefault(); e.dataTransfer.dropEffect='copy'; });
@@ -844,6 +1137,8 @@ canvas.addEventListener('drop', (e)=>{
     const {kind, key} = JSON.parse(e.dataTransfer.getData('text/plain'));
     const p = toProj(e);
     const sc = activeSceneObj(); if(!sc) return;
+    if (kind==='props'){ addPropToScene(key, p.x, p.y); return; }
+    pushHistory();
     const inst = newCharInstance(kind==='animals'?'animal:'+key:key, Math.round(p.x), Math.round(p.y));
     sc.characters.push(inst);
     state.selectedChar = inst.id;
@@ -855,9 +1150,16 @@ canvas.addEventListener('drop', (e)=>{
 document.addEventListener('keydown', (e)=>{
   const tag = document.activeElement?.tagName;
   if (tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return;
+  if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='z'){
+    e.preventDefault();
+    if (e.shiftKey) redo(); else undo();
+    return;
+  }
+  if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='y'){ e.preventDefault(); redo(); return; }
   if ((e.key==='Delete'||e.key==='Backspace') && state.selectedOverlay){
     const sc = activeSceneObj();
     if (sc){
+      pushHistory();
       sc.overlays = (sc.overlays||[]).filter(o=>o.id!==state.selectedOverlay);
       state.selectedOverlay = null;
       if (state.libTab==='fx') renderLibrary();
@@ -865,12 +1167,17 @@ document.addEventListener('keydown', (e)=>{
       return;
     }
   }
+  if ((e.key==='Delete'||e.key==='Backspace') && state.selectedProp){
+    deleteSelectedProp();
+    return;
+  }
   if ((e.key==='Delete'||e.key==='Backspace') && state.selectedChar){
     deleteSelectedChar();
   }
 });
 function deleteSelectedChar(){
   const sc = activeSceneObj(); if(!sc||!state.selectedChar) return;
+  pushHistory();
   const def = charDef(sc.characters.find(c=>c.id===state.selectedChar));
   sc.characters = sc.characters.filter(c=>c.id!==state.selectedChar);
   state.selectedChar = null;
@@ -887,15 +1194,82 @@ function syncProps(){
       const o=document.createElement('option'); o.value=k; o.textContent=v.name; bgSel.appendChild(o);
     }
   }
+  // anim options (build once, grouped)
+  const animSel = $('#propAnim');
+  if (!animSel.options.length){
+    const groups = [
+      ['Cơ bản', ['idle','walk','jump','celebrate']],
+      ['Cảm xúc', ['cry','kneel','sweep','bow','point','angry']],
+      ['👊 Chiến đấu', ['punch','punch_hook','kick','kick_round','block','dodge','fall']],
+      ['🤝 Tương tác', ['handshake','hug','pat','give','push','pull']],
+    ];
+    for (const [gname, keys] of groups){
+      const og = document.createElement('optgroup'); og.label = gname;
+      for (const k of keys){
+        if (!ANIMS[k]) continue;
+        const o = document.createElement('option'); o.value = k; o.textContent = ANIMS[k];
+        og.appendChild(o);
+      }
+      animSel.appendChild(og);
+    }
+  }
   if (sc){
     bgSel.value = sc.background;
     $('#propDur').value = sc.duration;
     $('#durVal').textContent = sc.duration;
     $('#propMusic').value = sc.music;
     if (document.activeElement!==$('#propDialogue')) $('#propDialogue').value = sc.dialogue;
+    if (document.activeElement!==$('#propTitle')) $('#propTitle').value = sc.title || '';
+    syncTransUI();
   }
   syncCharProps();
+  syncPropProps();
+  syncCamPanel();
   updateTotal();
+}
+
+// ---------- Transitions UI ----------
+function syncTransUI(){
+  const sc = activeSceneObj();
+  const sel = $('#propTrans');
+  if (!sel) return;
+  if (!sel.options.length){
+    for (const [k,v] of Object.entries(TRANSITIONS)){
+      const o = document.createElement('option');
+      o.value = k; o.textContent = v.name; o.title = v.desc;
+      sel.appendChild(o);
+    }
+  }
+  const isFirst = state.activeScene === 0;
+  const note = $('#transNote');
+  if (note) note.hidden = !isFirst;
+  sel.disabled = isFirst;
+  const durInp = $('#propTransDur');
+  if (durInp) durInp.disabled = isFirst;
+  if (sc){
+    const t = normTransUI(sc.transition);
+    sel.value = t.type;
+    if (durInp) durInp.value = t.duration;
+    const dv = $('#transDurVal');
+    if (dv) dv.textContent = t.duration.toFixed(1);
+    replayTransDemo(t.type);
+  }
+}
+function replayTransDemo(type){
+  const demo = $('#transDemo');
+  if (!demo) return;
+  demo.className = 'trans-demo';
+  void demo.offsetWidth; // restart CSS animation
+  if (type && type !== 'none') demo.classList.add('td-' + type);
+}
+function setSceneTransition(type, duration){
+  const sc = activeSceneObj(); if(!sc || state.activeScene===0) return;
+  pushHistory();
+  const t = normTransUI({type, duration});
+  sc.transition = t;
+  renderTimeline();
+  replayTransDemo(t.type);
+  toast(`🎞️ Chuyển cảnh: ${TRANSITIONS[t.type]?.name || t.type} ${t.duration.toFixed(1)}s`);
 }
 function syncCharProps(){
   const sc = activeSceneObj();
@@ -937,6 +1311,7 @@ function syncWaypointList(){
     list.appendChild(row);
   });
   list.querySelectorAll('input').forEach(inp=>{
+    armUndo(inp);
     inp.addEventListener('change', ()=>{
       const c2 = getSelChar(); if(!c2 || !c2.waypoints) return;
       const i = +inp.dataset.i, k = inp.dataset.k;
@@ -949,6 +1324,7 @@ function syncWaypointList(){
   list.querySelectorAll('[data-del]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const c2 = getSelChar(); if(!c2 || !c2.waypoints) return;
+      pushHistory();
       c2.waypoints.splice(+btn.dataset.del, 1);
       sortWps(c2); syncWaypointList(); draw(); renderTimeline();
       toast('Đã xóa waypoint');
@@ -963,21 +1339,147 @@ $('#btnWpMode')?.addEventListener('click', ()=>{
 });
 $('#btnWpClear')?.addEventListener('click', ()=>{
   const inst = getSelChar(); if(!inst) return;
+  pushHistory();
   inst.waypoints = [];
   syncWaypointList(); draw(); renderTimeline();
   toast('Đã xóa hết waypoints');
 });
 
-$('#propBg').addEventListener('change', e=>{ activeSceneObj().background=e.target.value; draw(); renderTimeline(); });
+$('#propBg').addEventListener('change', e=>{ pushHistory(); activeSceneObj().background=e.target.value; draw(); renderTimeline(); });
 $('#propDur').addEventListener('input', e=>{ activeSceneObj().duration=+e.target.value; $('#durVal').textContent=e.target.value; renderTimeline(); renderAudioTimeline(); updateTotal(); });
-$('#propMusic').addEventListener('change', e=>{ activeSceneObj().music=e.target.value; });
-$('#propDialogue').addEventListener('input', e=>{ activeSceneObj().dialogue=e.target.value; updateSubtitle(); });
+$('#propMusic').addEventListener('change', e=>{ pushHistory(); activeSceneObj().music=e.target.value; renderTimeline(); });
+$('#propDialogue').addEventListener('input', e=>{ activeSceneObj().dialogue=e.target.value; updateSubtitle(); renderTimeline(); });
+$('#propTitle').addEventListener('input', e=>{ const sc=activeSceneObj(); if(sc){ sc.title=e.target.value; } });
 $('#propX').addEventListener('input', e=>{ const c=getSelChar(); if(c){c.x=+e.target.value||0; draw();} });
 $('#propY').addEventListener('input', e=>{ const c=getSelChar(); if(c){c.y=+e.target.value||0; draw();} });
 $('#propScale').addEventListener('input', e=>{ const c=getSelChar(); if(c){c.scale=+e.target.value; $('#scaleVal').textContent=(+e.target.value).toFixed(1); draw();} });
-$('#propFlip').addEventListener('change', e=>{ const c=getSelChar(); if(c){c.flip=e.target.checked; draw();} });
-$('#propAnim').addEventListener('change', e=>{ const c=getSelChar(); if(c){c.anim=e.target.value; draw();} });
+$('#propFlip').addEventListener('change', e=>{ pushHistory(); const c=getSelChar(); if(c){c.flip=e.target.checked; draw();} });
+$('#propAnim').addEventListener('change', e=>{ pushHistory(); const c=getSelChar(); if(c){c.anim=e.target.value; draw();} });
 $('#btnDelChar').addEventListener('click', deleteSelectedChar);
+// prop panel listeners
+$('#ppropX').addEventListener('input', e=>{ const p=getSelProp(); if(p){p.x=+e.target.value||0; draw();} });
+$('#ppropY').addEventListener('input', e=>{ const p=getSelProp(); if(p){p.y=+e.target.value||0; draw();} });
+$('#ppropScale').addEventListener('input', e=>{ const p=getSelProp(); if(p){p.scale=+e.target.value; $('#pscaleVal').textContent=(+e.target.value).toFixed(1); draw();} });
+$('#btnDelProp').addEventListener('click', deleteSelectedProp);
+$('#propTrans').addEventListener('change', e=>{
+  const sc = activeSceneObj(); if(!sc) return;
+  setSceneTransition(e.target.value, normTransUI(sc.transition).duration);
+});
+$('#propTransDur').addEventListener('input', e=>{
+  const sc = activeSceneObj(); if(!sc || state.activeScene===0) return;
+  const t = normTransUI(sc.transition);
+  sc.transition = {type: t.type, duration: +e.target.value};
+  $('#transDurVal').textContent = (+e.target.value).toFixed(1);
+  renderTimeline();
+});
+armUndo($('#propTransDur'));
+['#propDur','#propScale','#propX','#propY','#propDialogue','#propBg','#propMusic','#propFlip','#propAnim']
+  .forEach(s=>armUndo($(s)));
+
+// ---------- Camera keyframes ----------
+function camKeys(sc){
+  // returns sorted [{t,x,y,z}] or []
+  if (!sc || !sc.cam || !Array.isArray(sc.cam.t)) return [];
+  const n = sc.cam.t.length;
+  const out = [];
+  for (let i=0;i<n;i++) out.push({
+    t: +sc.cam.t[i]||0, x: +((sc.cam.x||[])[i])||0,
+    y: +((sc.cam.y||[])[i])||0, z: +((sc.cam.z||[])[i])||1,
+  });
+  out.sort((a,b)=>a.t-b.t);
+  return out;
+}
+function setCamKeys(sc, keys){
+  keys.sort((a,b)=>a.t-b.t);
+  sc.cam = keys.length ? {
+    t: keys.map(k=>+k.t.toFixed(2)), x: keys.map(k=>Math.round(k.x)),
+    y: keys.map(k=>Math.round(k.y)), z: keys.map(k=>+k.z.toFixed(2)),
+  } : null;
+}
+function camAt(sc, t){
+  // interpolated {x,y,z} at time t (matches render-story.mjs camFn)
+  const keys = camKeys(sc);
+  if (!keys.length) return {x:0, y:0, z:1};
+  if (t <= keys[0].t) return {x:keys[0].x, y:keys[0].y, z:keys[0].z};
+  for (let i=0;i<keys.length-1;i++){
+    const a=keys[i], b=keys[i+1];
+    if (t <= b.t){
+      const u=(t-a.t)/Math.max(1e-6, b.t-a.t), e=u*u*(3-2*u);
+      return {x:a.x+(b.x-a.x)*e, y:a.y+(b.y-a.y)*e, z:a.z+(b.z-a.z)*e};
+    }
+  }
+  const l=keys[keys.length-1]; return {x:l.x, y:l.y, z:l.z};
+}
+function syncCamPanel(){
+  const sc = activeSceneObj();
+  const list = $('#camList'); if (!list) return;
+  list.innerHTML = '';
+  const keys = camKeys(sc);
+  if (!keys.length){
+    list.innerHTML = '<div class="wp-empty">Không có keyframe — camera đứng yên (toàn cảnh).</div>';
+    return;
+  }
+  keys.forEach((k, i)=>{
+    const row = document.createElement('div');
+    row.className = 'wp-row cam-row';
+    row.innerHTML = `
+      <span class="wp-num">🎥${i+1}</span>
+      <label>t <input type="number" data-i="${i}" data-k="t" value="${k.t}" step="0.5" min="0"></label>
+      <label>X <input type="number" data-i="${i}" data-k="x" value="${Math.round(k.x)}" step="20"></label>
+      <label>Y <input type="number" data-i="${i}" data-k="y" value="${Math.round(k.y)}" step="20"></label>
+      <label>Z <input type="number" data-i="${i}" data-k="z" value="${k.z}" step="0.1" min="0.3" max="4"></label>
+      <button class="btn small danger" data-del="${i}" title="Xóa keyframe">×</button>`;
+    list.appendChild(row);
+  });
+  list.querySelectorAll('input').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const sc2 = activeSceneObj(); if(!sc2) return;
+      const keys2 = camKeys(sc2);
+      const i = +inp.dataset.i, kk = inp.dataset.k;
+      if (!keys2[i]) return;
+      if (kk==='t') keys2[i].t = Math.min(sc2.duration, Math.max(0, +inp.value||0));
+      else if (kk==='z') keys2[i].z = Math.min(4, Math.max(0.3, +inp.value||1));
+      else keys2[i][kk] = Math.round(+inp.value||0);
+      setCamKeys(sc2, keys2); syncCamPanel(); draw();
+    });
+  });
+  list.querySelectorAll('[data-del]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const sc2 = activeSceneObj(); if(!sc2) return;
+      const keys2 = camKeys(sc2); keys2.splice(+btn.dataset.del, 1);
+      setCamKeys(sc2, keys2); syncCamPanel(); draw();
+    });
+  });
+}
+$('#btnCamAdd')?.addEventListener('click', ()=>{
+  const sc = activeSceneObj(); if(!sc) return;
+  const keys = camKeys(sc);
+  const t = keys.length ? Math.min(sc.duration, keys[keys.length-1].t + 2) : 0;
+  const prev = keys.length ? keys[keys.length-1] : {x:0,y:0,z:1};
+  keys.push({t, x:prev.x, y:prev.y, z:prev.z});
+  setCamKeys(sc, keys); syncCamPanel(); draw();
+  toast('Đã thêm camera keyframe 🎥');
+});
+$('#btnCamClear')?.addEventListener('click', ()=>{
+  const sc = activeSceneObj(); if(!sc) return;
+  sc.cam = null; syncCamPanel(); draw(); toast('Đã xóa camera');
+});
+$('#propCamShow')?.addEventListener('change', e=>{ state.showCam = e.target.checked; draw(); });
+document.querySelectorAll('[data-campreset]').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    const sc = activeSceneObj(); if(!sc) return;
+    const {w} = projSize();
+    const p = btn.dataset.campreset;
+    if (p==='wide')         setCamKeys(sc, [{t:0, x:0, y:0, z:0.85}]);
+    else if (p==='medium')   setCamKeys(sc, [{t:0, x:0, y:0, z:1.25}]);
+    else if (p==='closeup')  setCamKeys(sc, [{t:0, x:0, y:-80, z:1.9}]);
+    else if (p==='tracking') setCamKeys(sc, [
+      {t:0, x:-Math.round(w*0.15), y:0, z:1.2},
+      {t:sc.duration, x:Math.round(w*0.15), y:0, z:1.2}]);
+    syncCamPanel(); draw();
+    toast('Preset camera: ' + btn.textContent.trim() + ' 🎥');
+  });
+});
 
 // ---------- Timeline ----------
 function renderTimeline(){
@@ -988,13 +1490,17 @@ function renderTimeline(){
     const bg = BACKGROUNDS[sc.background];
     const wpCount = sc.characters.reduce((a,c)=>a+((c.waypoints||[]).length),0);
     const sfxCount = (sc.sfx||[]).length;
+    const tr = normTransUI(sc.transition);
+    const trBadge = (i>0 && tr.type!=='none')
+      ? `<span class="trans-badge" title="Chuyển cảnh vào scene này: ${TRANSITIONS[tr.type].desc}">🎞️ ${TRANSITIONS[tr.type].name.split(' ').slice(1).join(' ')||tr.type} ${tr.duration.toFixed(1)}s</span>`
+      : '';
     const wpDots = sc.characters.flatMap(c=>(c.waypoints||[]))
       .map(wp=>`<span class="wp-dot" style="left:${(wp.t/sc.duration*100).toFixed(1)}%"></span>`).join('');
     d.innerHTML = `
       <button class="s-del" title="Xóa scene">×</button>
       <img class="thumb" src="${bg?bg.file:''}" alt="">
       <div class="s-title">${i+1}. ${escHtml(sc.dialogue?.split('\n')[0]||'(chưa có thoại)')}</div>
-      <div class="s-meta">⏱ ${sc.duration}s • 🧍 ${sc.characters.length}${wpCount?` • 📍 ${wpCount}`:''}${sfxCount?` • 🔊 ${sfxCount}`:''} • 🎵 ${sc.music}</div>
+      <div class="s-meta">⏱ ${sc.duration}s • 🧍 ${sc.characters.length}${(sc.props||[]).length?` • 🖼️ ${sc.props.length}`:''}${wpCount?` • 📍 ${wpCount}`:''}${sfxCount?` • 🔊 ${sfxCount}`:''} • 🎵 ${sc.music}${trBadge?' • ':''}${trBadge}</div>
       ${wpDots?`<div class="wp-strip" title="${wpCount} waypoints">${wpDots}</div>`:''}
       <div class="s-nav">
         <button data-a="left" title="Sang trái">◀</button>
@@ -1016,26 +1522,29 @@ function renderTimeline(){
 }
 function escHtml(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function selectScene(i){
-  state.activeScene=i; state.selectedChar=null; state.selectedOverlay=null;
+  state.activeScene=i; state.selectedChar=null; state.selectedOverlay=null; state.selectedProp=null;
   syncProps(); renderTimeline(); renderAudioTimeline(); draw();
 }
 function moveScene(from,to){
+  pushHistory();
   const s=state.project.scenes;
   [s[from],s[to]]=[s[to],s[from]];
   state.activeScene=to; syncProps(); renderTimeline(); draw();
 }
 function delScene(i){
   if (state.project.scenes.length<=1){ toast('Phải giữ ít nhất 1 scene'); return; }
+  pushHistory();
   state.project.scenes.splice(i,1);
   if (state.activeScene>=state.project.scenes.length) state.activeScene=state.project.scenes.length-1;
   state.selectedChar=null; syncProps(); renderTimeline(); draw(); toast('Đã xóa scene');
 }
 function dupScene(i){
+  pushHistory();
   const copy = JSON.parse(JSON.stringify(state.project.scenes[i]));
   copy.id = nid('s');
   copy.characters.forEach(c=>c.id=nid('c'));
   state.project.scenes.splice(i+1,0,copy);
-  state.activeScene=i+1; state.selectedChar=null;
+  state.activeScene=i+1; state.selectedChar=null; state.selectedProp=null;
   syncProps(); renderTimeline(); draw(); toast('Đã nhân bản scene');
 }
 function updateTotal(){
@@ -1093,17 +1602,21 @@ function renderAudioTimeline(){
     // delete
     d.querySelector('.ac-del').addEventListener('click', (e)=>{
       e.stopPropagation();
+      pushHistory();
       sc.sfx = sc.sfx.filter(x=>x.id!==clip.id);
       renderAudioTimeline(); renderTimeline(); toast('Đã xóa SFX');
     });
     // volume
-    d.querySelector('.ac-vol input').addEventListener('input', (e)=>{
+    const volInp = d.querySelector('.ac-vol input');
+    armUndo(volInp);
+    volInp.addEventListener('input', (e)=>{
       clip.volume = +e.target.value;
     });
-    d.querySelector('.ac-vol input').addEventListener('click', (e)=>e.stopPropagation());
+    volInp.addEventListener('click', (e)=>e.stopPropagation());
     // drag to change t0
     d.addEventListener('mousedown', (e)=>{
       if (e.target.closest('button') || e.target.closest('input')) return;
+      pushHistory();
       e.preventDefault();
       const laneRect = lane.getBoundingClientRect();
       const startX = e.clientX, startT0 = clip.t0;
@@ -1136,6 +1649,7 @@ function togglePreviewMix(){
   setTimeout(()=>{ if (_mixHandle){ _mixHandle = null; btn.textContent = '▶ Nghe thử mix'; } }, (sc.duration+1)*1000);
 }
 $('#btnAddScene').addEventListener('click', ()=>{
+  pushHistory();
   state.project.scenes.push(newScene());
   state.activeScene = state.project.scenes.length-1;
   state.selectedChar=null; syncProps(); renderTimeline(); draw();
@@ -1145,6 +1659,17 @@ $('#btnDupScene').addEventListener('click', ()=>dupScene(state.activeScene));
 $('#btnDelScene').addEventListener('click', ()=>delScene(state.activeScene));
 
 // ---------- Preview ----------
+// Flash a CSS transition on the stage when preview advances to a new scene.
+function flashTransition(scene){
+  const box = $('#stageBox');
+  if (!box) return;
+  const t = normTransUI(scene && scene.transition);
+  box.classList.remove('trf-fade','trf-wipe','trf-slide','trf-zoom','trf-iris','trf-dissolve');
+  if (!t || t.type==='none') return;
+  box.style.setProperty('--trDur', t.duration.toFixed(2)+'s');
+  void box.offsetWidth; // restart animation
+  box.classList.add('trf-'+t.type);
+}
 function startPreview(){
   if (!state.project.scenes.length) return;
   state.playing = true;
@@ -1182,7 +1707,7 @@ function validateProject(p){
   p.scenes.forEach((s,i)=>{
     if (!BACKGROUNDS[s.background]) s.background='bg-park';
     s.duration = Math.min(60, Math.max(1, +s.duration||10));
-    s.music = s.music||'none'; s.dialogue = s.dialogue||'';
+    s.music = s.music||'none'; s.dialogue = s.dialogue||''; s.title = String(s.title||'');
     if (!Array.isArray(s.characters)) s.characters=[];
     s.characters.forEach(c=>{
       c.x=+c.x||0; c.y=+c.y||0; c.scale=+c.scale||1;
@@ -1198,7 +1723,38 @@ function validateProject(p){
         }));
       c.waypoints.sort((a,b)=>a.t-b.t);
     });
+    // sanitize props: [{id, asset, x, y, scale}]
+    if (!Array.isArray(s.props)) s.props = [];
+    s.props = s.props
+      .filter(pp=>pp && typeof pp.asset === 'string')
+      .map(pp=>({
+        id: pp.id || nid('p'),
+        asset: pp.asset,
+        x: Math.round(+pp.x || 0),
+        y: Math.round(+pp.y || 0),
+        scale: Math.min(3, Math.max(0.2, +pp.scale || 1)),
+      }));
     if(!s.id) s.id=nid('s');
+    // sanitize transition INTO this scene: {type, duration}
+    s.transition = (()=>{
+      const t = s.transition || {};
+      const type = TRANSITIONS[t.type] ? t.type : 'none';
+      const duration = Math.min(2, Math.max(0.3, +t.duration || 0.8));
+      return {type, duration};
+    })();
+    // sanitize camera keyframes: {t:[], x:[], y:[], z:[]}
+    if (s.cam && typeof s.cam === 'object' && Array.isArray(s.cam.t) && s.cam.t.length){
+      const n = s.cam.t.length;
+      const num = (a, fb) => Array.from({length:n}, (_,i)=> Number.isFinite(+((a||[])[i])) ? +((a||[])[i]) : fb);
+      const t = num(s.cam.t, 0).map(v=>Math.min(s.duration, Math.max(0, v)));
+      const x = num(s.cam.x, 0), y = num(s.cam.y, 0);
+      const z = num(s.cam.z, 1).map(v=>Math.min(4, Math.max(0.3, v)));
+      const ord = t.map((v,i)=>i).sort((a,b)=>t[a]-t[b]);
+      s.cam = { t: ord.map(i=>+t[i].toFixed(2)), x: ord.map(i=>Math.round(x[i])),
+                y: ord.map(i=>Math.round(y[i])), z: ord.map(i=>+z[i].toFixed(2)) };
+    } else {
+      s.cam = null;
+    }
     // sanitize weather: {rain,snow,fog,dust,leaves} 0-100
     if (!s.weather || typeof s.weather !== 'object') s.weather = {};
     WEATHER_IDS.forEach(k=>{
@@ -1250,6 +1806,7 @@ $('#fileImport').addEventListener('change', (e)=>{
   r.onload = ()=>{
     try{
       const p = validateProject(JSON.parse(r.result));
+      pushHistory();
       state.project=p; state.activeScene=0; state.selectedChar=null;
       $('#projectTitle').value=p.title; $('#projectSize').value=p.size;
       stopPreview(); syncAll(); toast(`Đã import: ${p.scenes.length} scenes ✅`);
@@ -1309,6 +1866,9 @@ function wpPos(c,el){
       return{x:a.x+(b.x-a.x)*p,m:true,dx:b.x-a.x};}}
   return{x:k[k.length-1].x,m:false,dx:0};}
 const drawWeather=(${typeof WeatherEngine!=='undefined' ? WeatherEngine.drawWeather.toString() : 'function(){ }'});
+const TRN={none:1,fade:1,wipe:1,slide:1,zoom:1,iris:1,dissolve:1};
+function normTrP(tr){const ty=(tr&&TRN[tr.type])?tr.type:'none';
+  return {type:ty, duration:ty==='none'?0:Math.min(2,Math.max(0.3,+((tr&&tr.duration)||0.8)))};}
 function rrP(c,px,py,pw,ph,r){r=Math.min(r,pw/2,ph/2);c.beginPath();c.moveTo(px+r,py);
   c.arcTo(px+pw,py,px+pw,py+ph,r);c.arcTo(px+pw,py+ph,px,py+ph,r);
   c.arcTo(px,py+ph,px,py,r);c.arcTo(px,py,px+pw,py,r);c.closePath();}
@@ -1354,8 +1914,29 @@ function drawScene(s,t,el){
 function tick(t){
   const s=P.scenes[si],el=(t-t0)/1000;
   document.getElementById('fill').style.width=(100*(si+el/s.duration)/P.scenes.length)+'%';
-  if(el>=s.duration){si++;if(si>=P.scenes.length){stop();return;}t0=t;}
-  drawScene(P.scenes[si],t,el);raf=requestAnimationFrame(tick);
+  if(el>=s.duration){
+    si++;
+    if(si>=P.scenes.length){stop();return;}
+    // the new scene's head was already shown during the transition overlap
+    const trA=normTrP(P.scenes[si].transition);
+    t0=t-(trA.type!=='none'?trA.duration*1000:0);
+  }
+  const s2=P.scenes[si],el2=(t-t0)/1000;
+  const tr=si+1<P.scenes.length?normTrP(P.scenes[si+1].transition):{type:'none',duration:0};
+  if(tr.type!=='none'&&el2>s2.duration-tr.duration){
+    // crossfade approximation for all transition types in the HTML player
+    // (the real per-type transitions render in scripts/render-story.mjs)
+    const p=Math.min(1,Math.max(0,(el2-(s2.duration-tr.duration))/tr.duration));
+    drawScene(s2,t,el2);
+    x.save();x.globalAlpha=p;
+    drawScene(P.scenes[si+1],t,0);
+    x.restore();
+    sub.textContent=s2.dialogue||'';
+    document.getElementById('t').textContent='Scene '+(si+1)+'/'+P.scenes.length;
+  } else {
+    drawScene(s2,t,el2);
+  }
+  raf=requestAnimationFrame(tick);
 }
 function stop(){playing=false;cancelAnimationFrame(raf);document.getElementById('play').textContent='▶ Phát lại';si=0;}
 document.getElementById('play').onclick=()=>{if(playing)return;playing=true;si=0;t0=performance.now();
@@ -1372,42 +1953,313 @@ drawScene(P.scenes[0],0,0);
 $('#btnExportHTML').addEventListener('click', exportHTML);
 
 // ---------- MP4 render job (cho pipeline Playwright/ffmpeg) ----------
-$('#btnRender').addEventListener('click', ()=>{
+// Convert Studio scene model -> render-story.mjs story format:
+//   characters: waypoints + anim  =>  moves[] timeline (engine actions)
+//   cam: {t,x,y,z} keyframes passed through
+function charToMoves(c, dur){
+  const moves = [];
+  const anim = ANIMS[c.anim] ? c.anim : 'idle';
+  const wps = (c.waypoints||[]).slice().sort((a,b)=>a.t-b.t);
+  const dirFlip = c.flip ? -1 : 1;
+  let cx = c.x, ct = 0;
+  for (const wp of wps){
+    if (wp.t > ct + 0.01)
+      moves.push({m:'walk', t0:+ct.toFixed(2), t1:+wp.t.toFixed(2), x0:cx, y0:c.y, x1:wp.x, y1:c.y});
+    cx = wp.x; ct = wp.t;
+  }
+  if (dur > ct + 0.01)
+    moves.push({m:anim, t0:+ct.toFixed(2), t1:+dur.toFixed(2), x0:cx, y0:c.y, x1:cx, y1:c.y, dir:dirFlip});
+  return moves;
+}
+function buildRenderJob(){
   const job = {
-    job: 'doodle-render', version: 1,
+    job: 'doodle-render', version: 2,
     title: state.project.title, size: state.project.size,
     fps: 30, out: 'doodle-story.mp4',
     scenes: state.project.scenes.map(s=>({
       background: BACKGROUNDS[s.background]?.file || s.background,
       duration: s.duration, music: s.music, dialogue: s.dialogue,
+      title: s.title || undefined,
+      transition: normTransUI(s.transition),
+      subtitles: s.dialogue ? [{t0:0.5, t1:Math.max(1, s.duration-0.5), text:s.dialogue}] : [],
+      cam: s.cam ? {t:s.cam.t, x:s.cam.x, y:s.cam.y, z:s.cam.z} : undefined,
       sfx: (s.sfx||[]).map(x=>({key:x.key, t0:x.t0, volume:x.volume, loop:x.loop})),
       weather: Object.assign({rain:0,snow:0,fog:0,dust:0,leaves:0}, s.weather),
       overlays: (s.overlays||[]).map(o=>({type:o.type, value:o.value, text:o.text,
         x:o.x, y:o.y, size:o.size, t0:o.t0, t1:o.t1})),
       characters: s.characters.map(c=>{
         const d = charDef(c);
-        return {name:d.name, sprite:d.file||d.emoji, kind:d.kind,
-                x:c.x, y:c.y, scale:c.scale, flip:c.flip, anim:c.anim,
-                waypoints:(c.waypoints||[]).map(wp=>({x:wp.x, t:wp.t}))};
+        const isAnimal = c.char.startsWith('animal:');
+        const petKind = isAnimal ? c.char.slice(7) : null;
+        const preset = !isAnimal && ['an','binh','chi','dung'].includes(c.char) ? c.char : undefined;
+        return {name:d.name, preset, kind:isAnimal?'pet':'human', petKind,
+                h:Math.round(290*(c.scale||1)),
+                dir:c.flip?-1:1, moves:charToMoves(c, s.duration)};
+      }),
+      props: (s.props||[]).map(p=>{
+        const d = (typeof propDef==='function') ? propDef(p.asset) : null;
+        return {asset:p.asset, name:d?.name||p.asset,
+                file:d?('assets/'+d.file):null,
+                x:p.x, y:p.y, scale:p.scale};
       }),
     })),
   };
-  const blob = new Blob([JSON.stringify(job,null,2)], {type:'application/json'});
+  return job;
+}
+function downloadBlob(obj, filename, mime){
+  const blob = new Blob([typeof obj==='string'?obj:JSON.stringify(obj,null,2)], {type:mime||'application/json'});
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download='render-job.json'; a.click();
+  a.href = URL.createObjectURL(blob); a.download=filename; a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
-  toast('Đã xuất render-job.json — dùng với doodle-anim Docker để render MP4 🎬', 3200);
+}
+
+// ---------- Render MP4 dialog: story.json for scripts/render-story.mjs ----------
+const STORY_PRESETS = ['an','binh','chi','dung'];
+const STORY_PETS = ['dog','cat'];
+function projectToStoryJson(quality, fps){
+  const [W,H] = quality.split('x').map(Number);
+  const [pw,ph] = state.project.size.split('x').map(Number);
+  const sx = W/pw, sy = H/ph;
+  const warnings = [];
+  const scenes = state.project.scenes.map((s,si)=>{
+    const gy = Math.round(H*0.85);
+    const characters = [];
+    s.characters.forEach(c=>{
+      const d = charDef(c);
+      const isAnimal = c.char.startsWith('animal:');
+      const h = Math.round(H*0.42*(c.scale||1));
+      const moves = charToMoves(c, s.duration).map(m=>({
+        m: (m.m==='walk'||m.m==='run') ? m.m : 'idle',
+        t0:m.t0, t1:m.t1,
+        x0:Math.round(m.x0*sx), y0:gy,
+        x1:Math.round(m.x1*sx), y1:gy,
+        dir: m.dir ?? (c.flip?-1:1),
+      }));
+      if (isAnimal){
+        const pk = c.char.slice(7);
+        const petKind = STORY_PETS.includes(pk) ? pk : 'dog';
+        if (petKind!==pk) warnings.push(`"${d.name}" → dùng pet "dog" (engine chỉ hỗ trợ dog/cat)`);
+        characters.push({kind:'pet', petKind, h, x:Math.round(c.x*sx), y:gy, moves});
+      } else if (STORY_PRESETS.includes(c.char)){
+        characters.push({preset:c.char, h, x:Math.round(c.x*sx), y:gy, dir:c.flip?-1:1, moves});
+      } else {
+        warnings.push(`"${d.name}" không có preset engine → dùng "an"`);
+        characters.push({preset:'an', h, x:Math.round(c.x*sx), y:gy, dir:c.flip?-1:1, moves});
+      }
+    });
+    const bgFile = BACKGROUNDS[s.background]?.file;
+    return {
+      id: s.id || ('s'+(si+1)),
+      duration: s.duration,
+      background: bgFile ? {image:'studio/'+bgFile} : {color:'#aee2ff'},
+      transition: normTransUI(s.transition),
+      subtitles: s.dialogue ? [{t0:0.5, t1:Math.max(1, s.duration-0.5), text:s.dialogue}] : [],
+      cam: s.cam || undefined,
+      weather: Object.assign({rain:0,snow:0,fog:0,dust:0,leaves:0}, s.weather),
+      overlays: (s.overlays||[]).map(o=>({
+        type:o.type, value:o.value, text:o.text,
+        x:Math.round(o.x*sx), y:Math.round(o.y*sy),
+        size:Math.round(o.size*((sx+sy)/2)), t0:o.t0, t1:o.t1,
+      })),
+      sfx: (s.sfx||[]).map(x=>({key:x.key, t0:x.t0, volume:x.volume, loop:x.loop})),
+      characters,
+    };
+  });
+  return { story:{title: state.project.title, size: quality, fps, scenes}, warnings };
+}
+function slugName(s){
+  return (s||'doodle-story').normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^a-zA-Z0-9\- ]+/g,'').trim().replace(/\s+/g,'-').toLowerCase() || 'doodle-story';
+}
+function renderDockerCmds(name){
+  return [
+    `# 1. Copy story.json vào container`,
+    `docker cp ${name}.json doodle-anim-app:/tmp/${name}.json`,
+    ``,
+    `# 2. Render trong container`,
+    `docker exec doodle-anim-app node /app/scripts/render-story.mjs /tmp/${name}.json /tmp/${name}.mp4`,
+    ``,
+    `# 3. Copy MP4 ra máy`,
+    `docker cp doodle-anim-app:/tmp/${name}.mp4 ./${name}.mp4`,
+  ].join('\n');
+}
+function openRenderDialog(){
+  const dlg = $('#renderDlg');
+  const nameInp = $('#rdName');
+  nameInp.value = slugName(state.project.title);
+  const refresh = ()=>{
+    const {warnings} = projectToStoryJson($('#rdQuality').value, +$('#rdFps').value);
+    const w = $('#rdWarn');
+    if (warnings.length){
+      w.hidden = false;
+      w.innerHTML = '⚠️ ' + warnings.map(escHtml).join('<br>⚠️ ');
+    } else w.hidden = true;
+    $('#rdCmdText').textContent = renderDockerCmds(nameInp.value || 'doodle-story');
+  };
+  $('#rdQuality').onchange = refresh;
+  $('#rdFps').onchange = refresh;
+  nameInp.oninput = refresh;
+  refresh();
+  dlg.hidden = false;
+}
+function closeRenderDialog(){ $('#renderDlg').hidden = true; }
+$('#btnRender').addEventListener('click', openRenderDialog);
+$('#rdClose').addEventListener('click', closeRenderDialog);
+$('#renderDlg').addEventListener('click', (e)=>{ if (e.target.id==='renderDlg') closeRenderDialog(); });
+document.addEventListener('keydown', (e)=>{
+  if (e.key==='Escape' && $('#renderDlg') && !$('#renderDlg').hidden) closeRenderDialog();
+});
+$('#rdDownload').addEventListener('click', ()=>{
+  const name = $('#rdName').value || 'doodle-story';
+  const {story} = projectToStoryJson($('#rdQuality').value, +$('#rdFps').value);
+  downloadBlob(story, name+'.json');
+  toast(`Đã tải ${name}.json — chạy lệnh Docker để render 🎬`);
+});
+$('#rdCopy').addEventListener('click', async ()=>{
+  const txt = $('#rdCmdText').textContent;
+  try{ await navigator.clipboard.writeText(txt); toast('Đã copy lệnh 📋'); }
+  catch(err){
+    const ta = document.createElement('textarea');
+    ta.value = txt; document.body.appendChild(ta); ta.select();
+    try{ document.execCommand('copy'); toast('Đã copy lệnh 📋'); }
+    catch(e2){ toast('Copy thất bại — bôi đen lệnh để copy tay'); }
+    ta.remove();
+  }
+});
+$('#rdJob').addEventListener('click', ()=>{
+  downloadBlob(buildRenderJob(), 'render-job.json');
+  toast('Đã xuất render-job.json (legacy) 💾');
+});
+
+// ---------- Templates ----------
+function tplChar(key, fx, anim='idle', over={}){
+  const {w, h} = projSize();
+  return Object.assign(newCharInstance(key, Math.round(w*fx), Math.round(h*0.82)), {anim}, over);
+}
+function tplSfx(key, t0=0, volume=80){
+  const c = newSfxClip(key); c.t0 = t0; c.volume = volume; return c;
+}
+function tplBubble(text, fx, fy, t0, t1, style='speech'){
+  const {w, h} = projSize();
+  const o = newOverlay('bubble', style, Math.round(w*fx), Math.round(h*fy));
+  o.text = text; o.t0 = t0; o.t1 = t1; o.size = 72;
+  return o;
+}
+const TEMPLATES = {
+  intro: {
+    name: '🎬 Mở đầu', desc: 'Title card + nhạc dạo + camera zoom-in',
+    build(){
+      const s = newScene({background:'bg-park', duration:6, music:'happy',
+        dialogue:'', title: state.project.title});
+      s.title = '🌟 ' + (state.project.title || 'Câu chuyện của tôi');
+      s.cam = {t:[0,6], x:[0,0], y:[0,0], z:[1.0,1.3]};
+      s.sfx = [tplSfx('mus_magic', 0, 40)];
+      return [s];
+    }
+  },
+  outro: {
+    name: '🏁 Kết thúc', desc: '"HẾT" + credits + nhân vật ăn mừng',
+    build(){
+      const s = newScene({background:'bg-night', duration:6, music:'romantic',
+        dialogue:'Cảm ơn bạn đã theo dõi!'});
+      s.title = 'HẾT';
+      s.characters = [
+        tplChar('an', 0.35, 'celebrate'),
+        tplChar('binh', 0.65, 'celebrate', {flip:true}),
+      ];
+      s.overlays = [tplBubble('Hẹn gặp lại! 👋', 0.5, 0.3, 1, 5)];
+      s.sfx = [tplSfx('applause', 0.5, 70)];
+      return [s];
+    }
+  },
+  transition: {
+    name: '🎞️ Chuyển cảnh', desc: 'Camera pan + SFX whoosh',
+    build(){
+      const {w} = projSize();
+      const s = newScene({background:'bg-road', duration:4, music:'none', dialogue:''});
+      s.cam = {t:[0,4], x:[-Math.round(w*0.15), Math.round(w*0.15)], y:[0,0], z:[1.2,1.2]};
+      s.sfx = [tplSfx('whoosh', 0, 85)];
+      s.weather = {rain:0, snow:0, fog:30, dust:0, leaves:0};
+      return [s];
+    }
+  },
+  dialogue: {
+    name: '💬 Hội thoại', desc: '2 nhân vật đối thoại + speech bubbles',
+    build(){
+      const s = newScene({background:'bg-home', duration:12, music:'none',
+        dialogue:''});
+      const c1 = tplChar('ban', 0.32, 'idle');
+      const c2 = tplChar('chong', 0.68, 'idle', {flip:true});
+      s.characters = [c1, c2];
+      s.overlays = [
+        tplBubble('Anh ơi, hôm nay có chuyện vui lắm!', 0.32, 0.30, 1, 4.5),
+        tplBubble('Thật không? Kể em nghe với!', 0.68, 0.30, 5, 8.5, 'thought'),
+        tplBubble('Để em kể cho anh nghe... 😊', 0.32, 0.30, 9, 11.5),
+      ];
+      s.emotes = [];
+      return [s];
+    }
+  },
+  action: {
+    name: '👊 Hành động', desc: 'Đấm → đá → ăn mừng, kèm SFX + camera',
+    build(){
+      const s1 = newScene({background:'bg-park', duration:4, music:'tense', dialogue:''});
+      s1.characters = [tplChar('an', 0.4, 'punch'), tplChar('dung', 0.62, 'block', {flip:true})];
+      s1.sfx = [tplSfx('punch', 0.4, 90), tplSfx('punch', 1.5, 90), tplSfx('punch', 2.6, 90)];
+      s1.cam = {t:[0,4], x:[0,0], y:[0,0], z:[1.0,1.35]};
+      const s2 = newScene({background:'bg-park', duration:4, music:'tense', dialogue:''});
+      s2.characters = [tplChar('an', 0.4, 'kick'), tplChar('dung', 0.62, 'dodge', {flip:true})];
+      s2.sfx = [tplSfx('thud', 0.5, 85)];
+      s2.cam = {t:[0,4], x:[-120,120], y:[0,0], z:[1.2,1.2]};
+      const s3 = newScene({background:'bg-park', duration:4, music:'happy', dialogue:'Chiến thắng!'});
+      s3.characters = [tplChar('an', 0.5, 'celebrate')];
+      s3.sfx = [tplSfx('applause', 0.3, 70)];
+      s3.overlays = [tplBubble('Tuyệt vời! 🎉', 0.5, 0.3, 0.5, 3.5, 'shout')];
+      return [s1, s2, s3];
+    }
+  },
+};
+function renderTplGrid(){
+  const g = $('#tplGrid'); g.innerHTML = '';
+  for (const [key, t] of Object.entries(TEMPLATES)){
+    const card = document.createElement('div');
+    card.className = 'tpl-card';
+    const nScenes = t.build ? null : 0;
+    card.innerHTML = `<div class="tpl-name">${t.name}</div><div class="tpl-desc">${t.desc}</div>
+      <button class="btn primary small">Dùng template</button>`;
+    card.querySelector('button').addEventListener('click', ()=>{
+      pushHistory();
+      state.project.scenes = t.build();
+      state.project.scenes.forEach(s=>{ if(!s.id) s.id = nid('s'); });
+      state.activeScene = 0; state.selectedChar = null; state.selectedOverlay = null; state.selectedProp = null;
+      $('#tplModal').style.display = 'none';
+      syncAll(); toast(`Đã áp dụng template ${t.name} ✅`);
+    });
+    g.appendChild(card);
+  }
+}
+$('#btnTemplates')?.addEventListener('click', ()=>{
+  renderTplGrid();
+  $('#tplModal').style.display = 'flex';
+});
+$('#btnTplClose')?.addEventListener('click', ()=>{ $('#tplModal').style.display = 'none'; });
+$('#tplModal')?.addEventListener('click', (e)=>{
+  if (e.target.id === 'tplModal') $('#tplModal').style.display = 'none';
 });
 
 // ---------- Toolbar misc ----------
 $('#projectTitle').addEventListener('input', e=>{ state.project.title=e.target.value; });
+armUndo($('#projectTitle'));
 $('#projectSize').addEventListener('change', e=>{
+  pushHistory();
   state.project.size=e.target.value; state.selectedChar=null;
   fitCanvas(); draw(); toast('Đổi kích thước: '+e.target.value);
 });
 $('#btnNew').addEventListener('click', ()=>{
-  if (confirm('Tạo dự án mới? Mọi thay đổi chưa lưu sẽ mất.')){ newProject(); toast('Dự án mới 🗑'); }
+  if (confirm('Tạo dự án mới? Mọi thay đổi chưa lưu sẽ mất.')){ pushHistory(); newProject(); toast('Dự án mới 🗑'); }
 });
+$('#btnUndo').addEventListener('click', undo);
+$('#btnRedo').addEventListener('click', redo);
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click', ()=>{
   state.libTab=t.dataset.tab; renderLibrary();
 }));
@@ -1446,6 +2298,8 @@ function seedDemo(){
 
 seedDemo();
 syncAll();
+pushHistory(); // baseline: undo returns to the seeded project
+updateUndoBtns();
 requestAnimationFrame(loop);
 setTimeout(()=>toast('💡 Kéo nhân vật từ thư viện vào canvas để bắt đầu!'), 600);
 })();

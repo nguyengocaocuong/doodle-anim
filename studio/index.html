@@ -19,10 +19,13 @@
   <div class="spacer"></div>
   <button id="btnPreview" class="btn primary" title="Xem thử toàn bộ">▶ Preview</button>
   <button id="btnStop" class="btn" title="Dừng preview" disabled>⏹</button>
+  <button id="btnUndo" class="btn" title="Hoàn tác (Ctrl+Z)" disabled>↩️</button>
+  <button id="btnRedo" class="btn" title="Làm lại (Ctrl+Shift+Z)" disabled>↪️</button>
   <button id="btnExportHTML" class="btn" title="Xuất file HTML chạy độc lập">🌐 HTML</button>
   <button id="btnExportJSON" class="btn" title="Lưu dự án ra JSON">💾 JSON</button>
   <button id="btnImportJSON" class="btn" title="Mở dự án từ JSON">📂 Import</button>
   <button id="btnRender" class="btn" title="Tạo render job cho MP4">🎬 MP4</button>
+  <button id="btnTemplates" class="btn" title="Chọn mẫu dựng sẵn">📋 Templates</button>
   <button id="btnNew" class="btn danger" title="Dự án mới">🗑 Mới</button>
 </header>
 
@@ -35,6 +38,7 @@
       <button class="tab" data-tab="bgs">🏞️ Bối cảnh</button>
       <button class="tab" data-tab="fx">✨ FX</button>
       <button class="tab" data-tab="sfx">🔊 SFX</button>
+      <button class="tab" data-tab="props">🖼️ Đồ vật</button>
     </div>
     <div class="lib-hint" id="libHint">Kéo thả vào canvas để thêm</div>
     <div id="libGrid" class="lib-grid"></div>
@@ -80,6 +84,21 @@
       <label>Lời thoại / phụ đề
         <textarea id="propDialogue" rows="3" placeholder="Nhập lời thoại hiển thị dưới video..."></textarea>
       </label>
+      <label>Tiêu đề scene (title card)
+        <input id="propTitle" type="text" placeholder="VD: HỒI 1 — LÀNG QUÊ">
+      </label>
+      <div id="transUI">
+        <label>🎞️ Chuyển cảnh vào scene này
+          <select id="propTrans"></select>
+        </label>
+        <label id="transDurRow">Thời gian: <span id="transDurVal">0.8</span>s
+          <input id="propTransDur" type="range" min="0.3" max="2" step="0.1" value="0.8">
+        </label>
+        <div class="trans-note" id="transNote" hidden>Scene đầu tiên — không có chuyển cảnh vào.</div>
+        <div id="transDemo" class="trans-demo" title="Demo hiệu ứng chuyển cảnh">
+          <div class="td-a">A</div><div class="td-b">B</div>
+        </div>
+      </div>
     </div>
 
     <div class="prop-group" id="charProps" style="display:none">
@@ -92,12 +111,7 @@
       </label>
       <label><input id="propFlip" type="checkbox"> Lật ngang (quay mặt)</label>
       <label>Animation
-        <select id="propAnim">
-          <option value="idle">Đứng yên (thở nhẹ)</option>
-          <option value="walk">Đi bộ</option>
-          <option value="jump">Nhảy</option>
-          <option value="celebrate">Ăn mừng</option>
-        </select>
+        <select id="propAnim"></select>
       </label>
       <div class="wp-section">
         <div class="wp-head">
@@ -109,6 +123,34 @@
         <button id="btnWpClear" class="btn small danger">Xóa hết waypoints</button>
       </div>
       <button id="btnDelChar" class="btn danger small">🗑 Xóa nhân vật</button>
+    </div>
+    <div class="prop-group" id="propProps" style="display:none">
+      <h4>🖼️ Đồ vật đã chọn</h4>
+      <div id="propPropName" class="char-name"></div>
+      <div id="propThumb" class="prop-thumb"></div>
+      <label>Vị trí X <input id="ppropX" type="number" step="10"></label>
+      <label>Vị trí Y <input id="ppropY" type="number" step="10"></label>
+      <label>Tỉ lệ: <span id="pscaleVal">1.0</span>
+        <input id="ppropScale" type="range" min="0.2" max="3" step="0.1" value="1">
+      </label>
+      <button id="btnDelProp" class="btn danger small">🗑 Xóa đồ vật</button>
+    </div>
+
+    <div class="prop-group">
+      <h4>📷 Camera</h4>
+      <div class="row cam-presets">
+        <button class="btn small" data-campreset="wide" title="Zoom 0.85 — thấy toàn cảnh">🌍 Toàn cảnh</button>
+        <button class="btn small" data-campreset="medium" title="Zoom 1.25">🧍 Trung cảnh</button>
+        <button class="btn small" data-campreset="closeup" title="Zoom 1.9 — cận mặt">😊 Cận cảnh</button>
+        <button class="btn small" data-campreset="tracking" title="Pan ngang theo dõi">🎥 Tracking</button>
+      </div>
+      <label class="check"><input id="propCamShow" type="checkbox" checked> Hiện khung camera trên canvas</label>
+      <div id="camList"></div>
+      <div class="row">
+        <button id="btnCamAdd" class="btn small">＋ Thêm keyframe</button>
+        <button id="btnCamClear" class="btn small danger">Xóa camera</button>
+      </div>
+      <div class="cam-hint">x/y: độ lệch tâm (px) • z: zoom • t: giây. Render nội suy mượt giữa các keyframe.</div>
     </div>
 
     <div class="prop-group">
@@ -139,6 +181,55 @@
 
 <div id="toast"></div>
 <input type="file" id="fileImport" accept=".json,application/json" hidden>
+
+<!-- Templates modal -->
+<div id="tplModal" class="modal" style="display:none">
+  <div class="modal-box">
+    <div class="modal-head">
+      <strong>📋 Chọn template mẫu</strong>
+      <button id="btnTplClose" class="btn small">✕</button>
+    </div>
+    <div class="modal-hint">Template sẽ <b>thay thế</b> toàn bộ dự án hiện tại bằng các scene mẫu dựng sẵn.</div>
+    <div id="tplGrid" class="tpl-grid"></div>
+  </div>
+</div>
+
+<!-- Render MP4 dialog -->
+<div id="renderDlg" class="dlg-backdrop" hidden>
+  <div class="dlg" role="dialog" aria-modal="true" aria-label="Render MP4">
+    <h3>🎬 Render MP4</h3>
+    <label>Tên file
+      <input id="rdName" type="text" value="doodle-story">
+    </label>
+    <div class="dlg-row">
+      <label>Chất lượng
+        <select id="rdQuality">
+          <option value="1280x720">HD 720p (nhanh)</option>
+          <option value="1920x1080" selected>Full HD 1080p</option>
+        </select>
+      </label>
+      <label>FPS
+        <select id="rdFps">
+          <option value="24">24</option>
+          <option value="30" selected>30</option>
+        </select>
+      </label>
+    </div>
+    <div id="rdWarn" class="rd-warn" hidden></div>
+    <div class="rd-cmd">
+      <div class="rd-cmd-head">
+        <span>🐳 Chạy trong Docker <code>doodle-anim-app</code>:</span>
+        <button id="rdCopy" class="btn small">📋 Copy lệnh</button>
+      </div>
+      <pre id="rdCmdText"></pre>
+    </div>
+    <div class="dlg-actions">
+      <button id="rdDownload" class="btn primary">⬇️ Tải story.json</button>
+      <button id="rdJob" class="btn" title="Định dạng cũ cho pipeline">render-job.json</button>
+      <button id="rdClose" class="btn">Đóng</button>
+    </div>
+  </div>
+</div>
 
 <script src="js/sfx-engine.js"></script>
 <script src="js/weather-engine.js"></script>
