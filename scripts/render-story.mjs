@@ -151,6 +151,7 @@ function makeTL(segs) {
     'punch','punch_hook','kick','kick_round','block','dodge','fall',
     'handshake','hug','pat','give','push','pull',
     'climb','catch','carry','weave','chop','panic',
+    'sit','sit_point','sit_angry',
     // animal actions (class Animal): cá bống/trâu/ngựa/quạ/bướm/sẻ
     'swim','surface','graze','rear','fly','perch','flutter'];
   for (const s of segs) {
@@ -270,6 +271,7 @@ function buildSceneHtml(scene, story, engineScripts, weatherSrc, bgDataUrl, prop
     : `const __bgImg = null;
        window.__bgReady = true; /* no image bg */`;
   // --- props (asset library): preload SVGs, draw under characters ---
+  // prop format: {file, x, y, scale} static, or {file, scale, moves:[{t0,t1,x0,y0,x1,y1}], endHide}
   const propBlocks = (scene.props || []).map((p, i) => {
     const url = (propDataUrls || [])[i];
     if (!url) return '';
@@ -279,7 +281,8 @@ function buildSceneHtml(scene, story, engineScripts, weatherSrc, bgDataUrl, prop
       im.src = ${JSON.stringify(url)};
       im.onload = () => { window.__propsReady++; };
       im.onerror = () => { window.__propsReady++; };
-      window.__propImgs.push({im, x:${+p.x || 0}, y:${+p.y || 0}, s:${s}});
+      window.__propImgs.push({im, x:${+p.x || 0}, y:${+p.y || 0}, s:${s},
+        moves:${JSON.stringify(p.moves || null)}, endHide:${p.endHide ? 1 : 0}});
     }`;
   }).join('\n');
   const propJs = `window.__propImgs = [];
@@ -366,10 +369,34 @@ window.__seek = function(t){
   const cam = camFn(t);
   ctx.save();
   ctx.translate(W/2, H/2); ctx.scale(cam.z, cam.z); ctx.translate(-W/2 - cam.x, -H/2 - cam.y);
-  const __psorted = [...window.__propImgs].sort((a,b)=>a.y-b.y);
-  for (const pr of __psorted){
-    if (pr.im.complete && pr.im.naturalWidth)
-      ctx.drawImage(pr.im, pr.x - pr.s/2, pr.y - pr.s, pr.s, pr.s);
+  const __psorted = [];
+  for (const pr of window.__propImgs){
+    if (!(pr.im.complete && pr.im.naturalWidth)) continue;
+    let px = pr.x, py = pr.y, vis = true;
+    const mv = pr.moves;
+    if (mv && mv.length){
+      const first = mv[0], last = mv[mv.length - 1];
+      if (t < first.t0){ vis = false; }
+      else if (t > last.t1){
+        if (pr.endHide) vis = false;
+        else { px = last.x1; py = last.y1; }
+      } else {
+        let seg = null;
+        for (const m of mv){ if (t >= m.t0 && t <= m.t1){ seg = m; break; } }
+        if (seg){
+          const f = (t - seg.t0) / Math.max(1e-6, seg.t1 - seg.t0);
+          px = seg.x0 + (seg.x1 - seg.x0) * f;
+          py = seg.y0 + (seg.y1 - seg.y0) * f;
+        } else {
+          for (const m of mv){ if (m.t1 <= t){ px = m.x1; py = m.y1; } }  // gap: hold
+        }
+      }
+    }
+    if (vis) __psorted.push({ pr, px, py });
+  }
+  __psorted.sort((a, b) => a.py - b.py);
+  for (const d of __psorted){
+    ctx.drawImage(d.pr.im, d.px - d.pr.s/2, d.py - d.pr.s, d.pr.s, d.pr.s);
   }
   for (const h of window.__chars) h.draw(ctx, t, 1);
   ctx.restore();
@@ -608,7 +635,8 @@ function assembleWithTransitions(segFiles, scenes, mixedAudio, outAbs, fps, W, H
 
 /**
  * Build a single mixed audio track for the whole story:
- *   - per-scene SFX clips: [{key, t0, volume(0-100), loop}] at absolute time
+ *   - per-scene SFX clips: [{key, t0, t1?, volume(0-100), loop}] at absolute time
+ *     (t1 optionally bounds a looped clip's end)
  *   - optional story.audio (music file) looped under everything at 40% volume
  * Returns path to a WAV file, or null if there is no audio at all.
  */
@@ -619,12 +647,21 @@ function buildMixedAudio(story, storyDir, tmpRoot, starts, totalDur, renderedSce
     const base = (starts && starts[i] != null) ? starts[i] : 0;
     for (const s of (scene.sfx || [])){
       if (!s || !s.key || !SFX_DUR[s.key]) continue;
+      const t0s = Math.max(0, +s.t0 || 0);
+      const at = base + t0s;
+      let remain = scene.duration - t0s;
+      let boundEnd = null;
+      if (s.t1 != null && isFinite(+s.t1)){
+        remain = Math.min(remain, Math.max(0, +s.t1 - t0s));
+        boundEnd = at + remain;
+      }
       clips.push({
         key: s.key,
-        at: base + Math.max(0, +s.t0 || 0),
+        at,
         vol: Math.min(1, Math.max(0, (+s.volume ?? 80) / 100)),
         loop: !!s.loop,
-        sceneRemain: scene.duration - Math.max(0, +s.t0 || 0),
+        sceneRemain: remain,
+        boundEnd,
       });
     }
   });
@@ -648,7 +685,8 @@ function buildMixedAudio(story, storyDir, tmpRoot, starts, totalDur, renderedSce
     }
     args.push('-i', wav);
     const ms = Math.round(c.at * 1000);
-    fc.push(`[${idx}:a]aresample=44100,adelay=${ms},volume=${c.vol.toFixed(3)},atrim=0:${totalDur.toFixed(2)}[a${idx}]`);
+    const trimEnd = (c.boundEnd != null ? c.boundEnd : totalDur).toFixed(2);
+    fc.push(`[${idx}:a]aresample=44100,adelay=${ms},volume=${c.vol.toFixed(3)},atrim=0:${trimEnd}[a${idx}]`);
     idx++;
   }
   if (hasMusic){

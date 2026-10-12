@@ -786,6 +786,17 @@ class Human extends DoodleChar {
       sway = Math.sin(cph)*0.015;
       actArmL = [-swA*0.6 + shuttle*0.6, syA + this.armLen*0.55];
       actArmR = [ swA*0.6 + shuttle*0.6, syA + this.armLen*0.55];
+    } else if(action === 'sit' || action === 'sit_point' || action === 'sit_angry'){
+      // ngồi ghế: thân hạ thấp, đùi duỗi về trước, tay đặt trên đùi
+      actDrop = this.legLen*0.42; headTilt = 0.05; headDY = 4; bob = 0; sway = 0;
+      actArmL = [-swA*0.7, syA + this.armLen*0.75];
+      actArmR = [ swA*0.7, syA + this.armLen*0.75];
+      if(action === 'sit_point'){
+        actArmR = [swA + this.armLen*1.05, syA - this.armLen*0.15];  // chỉ tay phải
+      } else if(action === 'sit_angry'){
+        actArmL = [-swA*1.5, syA + this.torsoH*0.52];  // chống nạnh khi ngồi
+        actArmR = [ swA*1.5, syA + this.torsoH*0.52];
+      }
     } else if(action === 'chop'){
       // chặt/đốn: 2 tay giơ cao cầm rìu, bổ mạnh xuống (chu kỳ 1.4s)
       const u = cyc(1.4);
@@ -857,8 +868,8 @@ class Human extends DoodleChar {
         roughStroke(ctx, [[0, hipY],[kneeX, kneeY],[footX, footY]], { seed:this.seed+s*53, wobble:0.9, width:1.6 });
         roughStroke(ctx, [[footX, footY],[footX + 8, footY]], { seed:this.seed+s*59, wobble:0.4, width:1.6 });
       }
-    } else if(action === 'weave'){
-      // ngồi dệt: đùi duỗi về phía trước, cẳng chân gập xuống (bàn chân chạm đất)
+    } else if(action === 'weave' || action === 'sit' || action === 'sit_point' || action === 'sit_angry'){
+      // ngồi (dệt / ngồi ghế): đùi duỗi về phía trước, cẳng chân gập xuống (bàn chân chạm đất)
       for(const s of [-1,1]){
         const kneeX = this.legLen*0.52 + s*7, kneeY = hipY + this.legLen*0.12;
         const footX = this.legLen*0.58 + s*7, footY = hipY + this.legLen*0.58;
@@ -1024,6 +1035,7 @@ class Human extends DoodleChar {
     const _mouth = this.mouth, _brows = this.brows, _eye = this.eyeStyle;
     if(action === 'cry'){ this.mouth = 'open'; this.brows = 'sad'; }
     else if(action === 'angry'){ this.mouth = 'frown'; this.brows = 'angry'; }
+    else if(action === 'sit_angry'){ this.mouth = 'frown'; this.brows = 'angry'; }
     else if(action === 'punch' || action === 'punch_hook' || action === 'kick' || action === 'kick_round'){ this.brows = 'angry'; }
     else if(action === 'block' || action === 'dodge' || action === 'fall'){ this.brows = 'sad'; }
     else if(action === 'hug' || action === 'handshake' || action === 'pat'){ this.mouth = 'smile'; }
