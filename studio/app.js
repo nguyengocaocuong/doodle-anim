@@ -1589,6 +1589,24 @@ function updateTotal(){
 }
 
 // ---------- Audio timeline (SFX per scene) ----------
+// Effective duration of a clip within a scene (loop clips stretch to scene end).
+function clipEffDur(clip, sceneDur){
+  return clip.loop ? Math.max(0.5, sceneDur - clip.t0) : (clip.dur || 2);
+}
+// Greedy lane allocation (DAW-style): sort by t0, place each clip in the first
+// lane whose last clip ends at/before this clip's t0. Sets clip._lane.
+// Returns the number of lanes needed.
+function allocateLanes(clips, sceneDur){
+  const sorted = [...clips].sort((a,b)=> (a.t0 - b.t0) || String(a.id).localeCompare(String(b.id)));
+  const laneEnds = [];
+  sorted.forEach(c=>{
+    let lane = 0;
+    while (lane < laneEnds.length && laneEnds[lane] > c.t0 + 1e-6) lane++;
+    c._lane = lane;
+    laneEnds[lane] = c.t0 + clipEffDur(c, sceneDur);
+  });
+  return laneEnds.length;
+}
 function renderAudioTimeline(){
   const el = $('#audioTimeline');
   const nameEl = $('#audioSceneName');
@@ -1620,21 +1638,31 @@ function renderAudioTimeline(){
     seekPreview(state.playSceneIdx, t);
   });
   el.appendChild(ruler);
-  const lane = document.createElement('div');
-  lane.className = 'audio-lane';
-  // playhead (updated per frame during preview)
+  // multi-lane layout (DAW-style): overlapping clips stack on separate lanes
+  const nLanes = allocateLanes(sc.sfx, dur);
+  const lanesWrap = document.createElement('div');
+  lanesWrap.className = 'audio-lanes';
+  const laneEls = [];
+  for (let l = 0; l < nLanes; l++){
+    const lane = document.createElement('div');
+    lane.className = 'audio-lane' + (l % 2 ? ' alt' : '');
+    lane.dataset.lane = l;
+    lanesWrap.appendChild(lane);
+    laneEls.push(lane);
+  }
+  // playhead spans all lanes (updated per frame during preview)
   const ph = document.createElement('div');
   ph.className = 'audio-playhead';
-  lane.appendChild(ph);
+  lanesWrap.appendChild(ph);
   sc.sfx.forEach(clip=>{
     const info = (typeof SFXEngine !== 'undefined') ? SFXEngine.info(clip.key) : null;
-    const cDur = clip.loop ? dur - clip.t0 : (clip.dur || 2);
+    const cDur = clipEffDur(clip, dur);
     const left = Math.min(100, clip.t0/dur*100);
     const width = Math.min(100 - left, Math.max(3, cDur/dur*100));
     const d = document.createElement('div');
     d.className = 'audio-clip' + (clip.loop ? ' loop' : '');
     d.style.left = left+'%'; d.style.width = width+'%';
-    d.title = `${clip.name} — bắt đầu ${clip.t0}s`;
+    d.title = `${clip.name}\nBắt đầu: ${clip.t0}s • Dài: ${cDur.toFixed(1)}s • Âm lượng: ${clip.volume}%${clip.loop ? ' • lặp' : ''}`;
     d.innerHTML = `
       <span class="ac-name">🔊 ${escHtml(clip.name)}</span>
       <span class="ac-t">${clip.t0.toFixed(1)}s</span>
@@ -1658,32 +1686,52 @@ function renderAudioTimeline(){
     armUndo(volInp);
     volInp.addEventListener('input', (e)=>{
       clip.volume = +e.target.value;
+      d.title = `${clip.name}\nBắt đầu: ${clip.t0}s • Dài: ${cDur.toFixed(1)}s • Âm lượng: ${clip.volume}%${clip.loop ? ' • lặp' : ''}`;
     });
     volInp.addEventListener('click', (e)=>e.stopPropagation());
-    // drag to change t0
+    // drag: horizontal = change t0, vertical = move across lanes
     d.addEventListener('mousedown', (e)=>{
       if (e.target.closest('button') || e.target.closest('input')) return;
       pushHistory();
       e.preventDefault();
-      const laneRect = lane.getBoundingClientRect();
+      d.classList.add('dragging');
+      const wrapRect = lanesWrap.getBoundingClientRect();
       const startX = e.clientX, startT0 = clip.t0;
+      const laneAt = (clientY)=>{
+        const els = [...lanesWrap.querySelectorAll('.audio-lane')];
+        for (let i = 0; i < els.length; i++){
+          const r = els[i].getBoundingClientRect();
+          if (clientY < r.bottom + 2) return {el: els[i], idx: i};
+        }
+        return {el: null, idx: els.length}; // below all lanes -> new lane
+      };
       const mv = (e2)=>{
-        const dx = (e2.clientX - startX) / laneRect.width * dur;
+        const dx = (e2.clientX - startX) / wrapRect.width * dur;
         clip.t0 = Math.max(0, Math.min(dur - 0.1, +(startT0 + dx).toFixed(1)));
         d.style.left = Math.min(100, clip.t0/dur*100)+'%';
         d.querySelector('.ac-t').textContent = clip.t0.toFixed(1)+'s';
+        // move across lanes while dragging
+        let {el: targetLane, idx} = laneAt(e2.clientY);
+        if (!targetLane){
+          targetLane = document.createElement('div');
+          targetLane.className = 'audio-lane' + (idx % 2 ? ' alt' : '');
+          targetLane.dataset.lane = idx;
+          lanesWrap.insertBefore(targetLane, ph);
+        }
+        if (d.parentElement !== targetLane) targetLane.appendChild(d);
       };
       const up = ()=>{
         document.removeEventListener('mousemove', mv);
         document.removeEventListener('mouseup', up);
-        renderAudioTimeline();
+        d.classList.remove('dragging');
+        renderAudioTimeline(); // re-allocate lanes optimally after drop
       };
       document.addEventListener('mousemove', mv);
       document.addEventListener('mouseup', up);
     });
-    lane.appendChild(d);
+    laneEls[clip._lane || 0].appendChild(d);
   });
-  el.appendChild(lane);
+  el.appendChild(lanesWrap);
 }
 let _mixHandle = null;
 function togglePreviewMix(){

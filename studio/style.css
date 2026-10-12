@@ -300,17 +300,21 @@ main{flex:1; display:flex; min-height:0}
 .audio-empty{font-size:12px; color:var(--muted); text-align:center; padding:14px}
 .audio-ruler{position:relative; height:16px; font-size:10px; color:var(--muted); margin-bottom:4px}
 .audio-ruler span{position:absolute; transform:translateX(-50%)}
-.audio-lane{position:relative; height:44px; background:#181b23; border-radius:6px}
-.audio-playhead{position:absolute; top:0; bottom:0; width:2px; background:#ff6b6b; box-shadow:0 0 6px rgba(255,107,107,.8); pointer-events:none; z-index:5}
+.audio-lanes{position:relative}
+.audio-lane{position:relative; height:40px; background:#181b23; border-radius:6px; margin-bottom:4px}
+.audio-lane:last-of-type{margin-bottom:0}
+.audio-lane.alt{background:#14161e}
+.audio-playhead{position:absolute; top:0; bottom:0; width:2px; background:#ff6b6b; box-shadow:0 0 6px rgba(255,107,107,.8); pointer-events:none; z-index:20}
 .audio-clip{
-  position:absolute; top:4px; height:36px;
+  position:absolute; top:2px; height:36px;
   background:linear-gradient(135deg,#3b5bdb,#748ffc);
   border-radius:6px; display:flex; align-items:center; gap:4px; padding:0 6px;
   cursor:grab; overflow:hidden; border:1px solid rgba(255,255,255,.15);
-  font-size:11px; color:#fff; white-space:nowrap;
+  font-size:11px; color:#fff; white-space:nowrap; z-index:5;
 }
 .audio-clip.loop{background:linear-gradient(135deg,#6d28d9,#a78bfa)}
 .audio-clip:active{cursor:grabbing}
+.audio-clip.dragging{opacity:.88; box-shadow:0 4px 16px rgba(0,0,0,.55); z-index:15}
 .ac-name{flex:1; overflow:hidden; text-overflow:ellipsis; pointer-events:none}
 .ac-t{font-size:10px; opacity:.85; pointer-events:none}
 .ac-play,.ac-del{
