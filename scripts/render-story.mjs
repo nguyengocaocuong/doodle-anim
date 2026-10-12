@@ -610,7 +610,7 @@ function buildMixedAudio(story, storyDir, tmpRoot, starts, totalDur, renderedSce
     idx++;
   }
   const mixIns = clips.map((_, i)=>`[a${i}]`).join('') + (hasMusic ? '[mus]' : '');
-  fc.push(`${mixIns}amix=inputs=${idx}:duration=first:dropout_transition=0,aformat=channel_layouts=stereo[aout]`);
+  fc.push(`${mixIns}amix=inputs=${idx}:duration=longest:dropout_transition=0,aformat=channel_layouts=stereo[aout]`);
   args.push('-filter_complex', fc.join(';'), '-map', '[aout]', '-c:a', 'pcm_s16le', join(tmpRoot, 'mixed.wav'));
   execFileSync('ffmpeg', args, { stdio: 'inherit' });
   return join(tmpRoot, 'mixed.wav');

@@ -455,7 +455,7 @@ function addPropToScene(assetId, x, y){
     y != null ? Math.round(y) : Math.round(h*0.72));
   pushHistory();
   sc.props.push(inst);
-  state.selectedProp = inst.id; state.selectedChar = null; state.selectedOverlay = null; state.selectedProp = null;
+  state.selectedProp = inst.id; state.selectedChar = null; state.selectedOverlay = null;
   syncProps(); draw(); renderTimeline();
   toast('Đã thêm: ' + (propDef(assetId)?.name || assetId));
 }
@@ -1049,7 +1049,6 @@ canvas.addEventListener('mousedown', (e)=>{
   if (!state.playing){
     const ovHit = overlayAt(p.x, p.y);
     if (ovHit){
-      pushHistory();
       state.selectedOverlay = ovHit.id;
       state.dragOverlay = ovHit;
       state.dragOffset = {x: ovHit.x - p.x, y: ovHit.y - p.y};
@@ -1062,7 +1061,6 @@ canvas.addEventListener('mousedown', (e)=>{
   }
   const propHit = propAt(p.x,p.y);
   if (propHit){
-    pushHistory();
     state.selectedProp = propHit.id; state.selectedChar = null;
     state.dragProp = propHit;
     state.dragOffset = {x: propHit.x-p.x, y: propHit.y-p.y};
@@ -1072,7 +1070,6 @@ canvas.addEventListener('mousedown', (e)=>{
   state.selectedProp = null;
   const hit = charAt(p.x,p.y);
   if (hit){
-    pushHistory();
     state.selectedChar = hit.id;
     state.dragChar = hit;
     state.dragOffset = {x: hit.x-p.x, y: hit.y-p.y};
@@ -1099,6 +1096,11 @@ canvas.addEventListener('contextmenu', (e)=>{
   }
 });
 window.addEventListener('mousemove', (e)=>{
+  // lazy history: snapshot once when a drag actually moves (not on plain clicks)
+  if ((state.dragOverlay || state.dragChar || state.dragProp) && !state._dragArmed){
+    pushHistory();
+    state._dragArmed = true;
+  }
   if (state.dragOverlay){
     const r = canvas.getBoundingClientRect();
     if (e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom) return;
@@ -1127,7 +1129,7 @@ window.addEventListener('mousemove', (e)=>{
   state.dragChar.y = Math.round(Math.min(h,Math.max(0,p.y+state.dragOffset.y)));
   syncCharProps(); draw();
 });
-window.addEventListener('mouseup', ()=>{ state.dragChar=null; state.dragOverlay=null; state.dragProp=null; canvas.style.cursor='default'; });
+window.addEventListener('mouseup', ()=>{ state.dragChar=null; state.dragOverlay=null; state.dragProp=null; state._dragArmed=false; canvas.style.cursor='default'; });
 
 // drop from library
 canvas.addEventListener('dragover', (e)=>{ e.preventDefault(); e.dataTransfer.dropEffect='copy'; });
