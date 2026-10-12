@@ -1177,5 +1177,184 @@
    "xe tải",
    "truck"
   ]
+ },
+ {
+  "id": "yem-dao",
+  "name": "Yếm đào",
+  "category": "tamcam",
+  "file": "props/yem-dao.svg",
+  "tags": [
+   "yếm",
+   "yếm đào",
+   "đỏ",
+   "thưởng",
+   "bắt tép",
+   "tamcam"
+  ]
+ },
+ {
+  "id": "lo-sanh",
+  "name": "Lọ sành",
+  "category": "tamcam",
+  "file": "props/lo-sanh.svg",
+  "tags": [
+   "lọ",
+   "lọ sành",
+   "sành",
+   "nâu",
+   "xương bống",
+   "tamcam"
+  ]
+ },
+ {
+  "id": "thoc-gao",
+  "name": "Thóc gạo",
+  "category": "tamcam",
+  "file": "props/thoc-gao.svg",
+  "tags": [
+   "thóc",
+   "gạo",
+   "lẫn lộn",
+   "đống",
+   "tamcam"
+  ]
+ },
+ {
+  "id": "giay-theu",
+  "name": "Giày thêu",
+  "category": "tamcam",
+  "file": "props/giay-theu.svg",
+  "tags": [
+   "giày",
+   "thêu",
+   "hài",
+   "rơi",
+   "tamcam"
+  ]
+ },
+ {
+  "id": "kieu-hoa",
+  "name": "Kiệu hoa",
+  "category": "tamcam",
+  "file": "props/kieu-hoa.svg",
+  "tags": [
+   "kiệu",
+   "rước dâu",
+   "đám cưới",
+   "hoa",
+   "tamcam"
+  ]
+ },
+ {
+  "id": "riu",
+  "name": "Rìu",
+  "category": "tamcam",
+  "file": "props/riu.svg",
+  "tags": [
+   "rìu",
+   "đốn cây",
+   "chặt",
+   "tamcam"
+  ]
+ },
+ {
+  "id": "khung-cui",
+  "name": "Khung cửi",
+  "category": "tamcam",
+  "file": "props/khung-cui.svg",
+  "tags": [
+   "khung cửi",
+   "dệt vải",
+   "cửi",
+   "tamcam"
+  ]
+ },
+ {
+  "id": "qua-thi",
+  "name": "Quả thị",
+  "category": "tamcam",
+  "file": "props/qua-thi.svg",
+  "tags": [
+   "thị",
+   "quả thị",
+   "thơm",
+   "vàng",
+   "tamcam"
+  ]
+ },
+ {
+  "id": "trau-cau",
+  "name": "Trầu cau",
+  "category": "tamcam",
+  "file": "props/trau-cau.svg",
+  "tags": [
+   "trầu",
+   "cau",
+   "cánh phượng",
+   "têm",
+   "tamcam"
+  ]
+ },
+ {
+  "id": "mam-cung",
+  "name": "Mâm cúng",
+  "category": "tamcam",
+  "file": "props/mam-cung.svg",
+  "tags": [
+   "mâm cúng",
+   "giỗ",
+   "cúng",
+   "mâm",
+   "tamcam"
+  ]
+ },
+ {
+  "id": "vong",
+  "name": "Võng",
+  "category": "tamcam",
+  "file": "props/vong.svg",
+  "tags": [
+   "võng",
+   "hammock",
+   "tamcam"
+  ]
+ },
+ {
+  "id": "don-ganh",
+  "name": "Đòn gánh",
+  "category": "tamcam",
+  "file": "props/don-ganh.svg",
+  "tags": [
+   "đòn gánh",
+   "gánh nước",
+   "thùng nước",
+   "tamcam"
+  ]
+ },
+ {
+  "id": "gay-truc",
+  "name": "Gậy trúc",
+  "category": "tamcam",
+  "file": "props/gay-truc.svg",
+  "tags": [
+   "gậy",
+   "trúc",
+   "bụt",
+   "staff",
+   "tamcam"
+  ]
+ },
+ {
+  "id": "cay-cau",
+  "name": "Cây cau",
+  "category": "tamcam",
+  "file": "props/cay-cau.svg",
+  "tags": [
+   "cây cau",
+   "cau",
+   "cây",
+   "background",
+   "tamcam"
+  ]
  }
 ]

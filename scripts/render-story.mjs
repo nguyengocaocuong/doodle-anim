@@ -47,12 +47,14 @@
 //           // stationary actions (m): cry kneel sweep bow point angry
 //           //   combat: punch punch_hook kick kick_round block dodge fall
 //           //   interaction: handshake hug pat give push pull
+//           //   tamcam: climb catch carry weave chop panic
 //           //   e.g. { "m": "punch", "t0": 4, "t1": 5.2, "x0": 500, "y0": 880, "x1": 500, "y1": 880 }
 //           // Camera (optional): keyframed {x,y,z} with times t (seconds)
 //           //   "cam": { "x": [0, 500], "y": [0, 0], "z": [1.0, 1.5], "t": [0, 5] }
 //           //   without "t": linear over scene duration (legacy {x:[a,b]} form)
 //           //   presets: close-up z~1.9, medium z~1.25, wide z~0.85
 //           "dir": 1,
+//           "kind": "pet", "petKind": "trau",      // pet: dog|cat -> class Pet; cabong|trau|nguahong|qua|buom|se -> class Animal
 //           "attrs": { "clothC": "#ff0000" },      // override appearance
 //           "seed": 42,
 //           "emotes": [ { "what": "!", "t0": 4, "t1": 6 } ]   // ! ? ... heart sweat music
@@ -134,7 +136,12 @@ const PRESETS = {
   dighe: { skinC: '#e8c39e', hairC: '#2a2018', hair: 'bowl',    topknot: true,   clothC: '#7a5a9a', outfit: 'dress', aoDai: true, mouth: 'frown', eyeStyle: 'open', brows: 'angry', seed: 203 },
   but:   { skinC: '#eecfa8', hairC: '#e8e4da', hair: 'strands', beard: 'white',  clothC: '#d8a83a', outfit: 'shirt', mouth: 'smile', eyeStyle: 'calm', brows: 'soft',  seed: 204 },
   vua:   { skinC: '#f0d0a8', hairC: '#1a1a1a', hair: 'bowl',    crown: true,     clothC: '#e8b83a', outfit: 'shirt', mouth: 'flat',  eyeStyle: 'open', brows: 'none',  seed: 205 },
+  bacu:  { skinC: '#e8c39e', hairC: '#d8d8d8', hair: 'bun',     headscarf: true, hunch: true, clothC: '#6a5a4a', outfit: 'dress', mouth: 'smile', eyeStyle: 'calm', brows: 'soft', seed: 206 },
+  linh:  { skinC: '#e8b98a', hairC: '#1a1a1a', hair: 'short',   beret: true, spear: true, clothC: '#3a5a7a', outfit: 'shirt', mouth: 'flat',  eyeStyle: 'open', brows: 'none', seed: 207 },
 };
+// ---- petKind -> engine class: chó/mèo dùng Pet, động vật Tấm Cám dùng Animal ----
+const ANIMAL_KINDS = ['cabong', 'trau', 'nguahong', 'qua', 'buom', 'se'];
+// (dùng trong story: { "kind": "pet", "petKind": "trau", "h": 260 })
 
 // ---- Timeline with phase continuity (walk cycle doesn't jump between segs) ----
 function makeTL(segs) {
@@ -142,7 +149,10 @@ function makeTL(segs) {
   const tl = [];
   const ACTIONS = ['cry','kneel','sweep','bow','point','angry',
     'punch','punch_hook','kick','kick_round','block','dodge','fall',
-    'handshake','hug','pat','give','push','pull'];
+    'handshake','hug','pat','give','push','pull',
+    'climb','catch','carry','weave','chop','panic',
+    // animal actions (class Animal): cá bống/trâu/ngựa/quạ/bướm/sẻ
+    'swim','surface','graze','rear','fly','perch','flutter'];
   for (const s of segs) {
     const dist = Math.hypot((s.x1 ?? 0) - (s.x0 ?? 0), (s.y1 ?? 0) - (s.y0 ?? 0));
     const dur = s.t1 - s.t0;
@@ -216,9 +226,7 @@ function buildSceneHtml(scene, story, engineScripts, weatherSrc, bgDataUrl, prop
     const emotes = (c.emotes || []).map((e, j) =>
       `{what:${JSON.stringify(e.what)},t0:${e.t0},t1:${e.t1},seed:${seed * 10 + j}}`).join(',');
     return `{
-      const cls = ${JSON.stringify(c.kind === 'pet' ? 'Pet' : 'Human')};
-      const petOpt = ${JSON.stringify(c.kind === 'pet' ? { petKind: c.petKind || 'dog' } : {})};
-      const h = new (cls === 'Pet' ? Pet : Human)(${seed}, Object.assign({ h: ${c.h || 290}, duration: ${dur}, W: ${W}, groundTop: ${gy}, groundBot: ${gy}, x0: ${W / 2} }, petOpt));
+      const h = new ${c.kind === 'pet' ? (ANIMAL_KINDS.includes(c.petKind) ? 'Animal' : 'Pet') : 'Human'}(${seed}, Object.assign({ h: ${c.h || 290}, duration: ${dur}, W: ${W}, groundTop: ${gy}, groundBot: ${gy}, x0: ${W / 2} }, ${JSON.stringify(c.kind === 'pet' ? { petKind: c.petKind || 'dog' } : {})}));
       Object.assign(h, ${JSON.stringify(attrs)});
       h.tl = ${JSON.stringify(tl)};
       h.emotes = [${emotes}];

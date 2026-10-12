@@ -20,6 +20,13 @@ const HUMANS = {
   tu:    {name:'Tú',            file:'assets/tu.png'},
   banoi: {name:'Bà nội',        file:'assets/banoi.png'},
   concai:{name:'3 đứa trẻ',     file:'assets/concai.png'},
+  tam:   {name:'Tấm',           file:'assets/tam.png'},
+  cam:   {name:'Cám',           file:'assets/cam.png'},
+  dighe: {name:'Dì ghẻ',        file:'assets/dighe.png'},
+  but:   {name:'Ông Bụt',       file:'assets/but.png'},
+  vua:   {name:'Vua',           file:'assets/vua.png'},
+  bacu:  {name:'Bà cụ hàng nước', file:'assets/bacu.png'},
+  linh:  {name:'Lính',          file:'assets/linh.png'},
 };
 const ANIMALS = {
   cat:    {name:'Mèo',  emoji:'🐱'},
@@ -2247,8 +2254,8 @@ function downloadBlob(obj, filename, mime){
 }
 
 // ---------- Render MP4 dialog: story.json for scripts/render-story.mjs ----------
-const STORY_PRESETS = ['an','binh','chi','dung'];
-const STORY_PETS = ['dog','cat'];
+const STORY_PRESETS = ['an','binh','chi','dung','tam','cam','dighe','but','vua','bacu','linh'];
+const STORY_PETS = ['dog','cat','cabong','trau','nguahong','qua','buom','chim','ga'];
 function projectToStoryJson(quality, fps){
   const [W,H] = quality.split('x').map(Number);
   const [pw,ph] = state.project.size.split('x').map(Number);
