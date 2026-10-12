@@ -44,6 +44,14 @@
 //             { "m": "walk", "t0": 0, "t1": 4, "x0": -100, "y0": 880, "x1": 500, "y1": 880 },
 //             { "m": "idle", "t0": 4, "t1": 10, "x0": 500, "y0": 880, "x1": 500, "y1": 880 }
 //           ],
+//           // stationary actions (m): cry kneel sweep bow point angry
+//           //   combat: punch punch_hook kick kick_round block dodge fall
+//           //   interaction: handshake hug pat give push pull
+//           //   e.g. { "m": "punch", "t0": 4, "t1": 5.2, "x0": 500, "y0": 880, "x1": 500, "y1": 880 }
+//           // Camera (optional): keyframed {x,y,z} with times t (seconds)
+//           //   "cam": { "x": [0, 500], "y": [0, 0], "z": [1.0, 1.5], "t": [0, 5] }
+//           //   without "t": linear over scene duration (legacy {x:[a,b]} form)
+//           //   presets: close-up z~1.9, medium z~1.25, wide z~0.85
 //           "dir": 1,
 //           "attrs": { "clothC": "#ff0000" },      // override appearance
 //           "seed": 42,
@@ -61,6 +69,16 @@
 //   ] } ]
 // SFX keys are synthesized server-side by scripts/sfx-synth.mjs (same recipes
 // as Doodle Studio's Web Audio preview), so no audio files are needed.
+//
+// Scene transitions (optional) — applied BETWEEN consecutive scenes:
+//   "scenes": [
+//     { "id": "s1", "duration": 10, ... },                       // first scene: no transition
+//     { "id": "s2", "duration": 8, "transition": { "type": "fade", "duration": 0.8 }, ... },
+//   ]
+// "type": none | fade | wipe | slide | zoom | iris | dissolve
+//   - the transition INTO scene N overlaps the tail of scene N-1
+//   - final video duration = sum(durations) - sum(transition durations)
+//   - implemented with ffmpeg xfade (zoom = zoompan + fade, iris = circleopen)
 // ============================================================================
 import { chromium } from 'playwright';
 import { readFileSync, mkdirSync, writeFileSync, mkdtempSync, existsSync } from 'fs';
@@ -74,18 +92,57 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
 const TEMPLATES_DIR = join(REPO_ROOT, 'templates');
 
+// ---- Scene transitions: Studio id -> ffmpeg xfade transition ----
+const XFADE_MAP = {
+  fade: 'fade', wipe: 'wipeleft', slide: 'slideleft',
+  iris: 'circleopen', dissolve: 'dissolve',
+  // 'zoom' is custom (zoompan + fade); 'none' = hard cut
+};
+const TRANSITION_IDS = ['none', 'fade', 'wipe', 'slide', 'zoom', 'iris', 'dissolve'];
+
+function normTransition(t){
+  const type = (t && TRANSITION_IDS.includes(t.type)) ? t.type : 'none';
+  let duration = Math.min(3, Math.max(0.2, +(t && t.duration) || 0.8));
+  return { type, duration };
+}
+
+// Absolute start time of each scene in the FINAL video (after transitions
+// eat into the tail of the previous scene). scenes[0] starts at 0.
+// 'none' (hard cut) still overlaps 1 frame in the xfade chain, so the audio
+// model uses the same overlap to stay sample-accurate with video.
+function boundaryOverlap(scenes, i, fps){
+  const t = normTransition(scenes[i] && scenes[i].transition);
+  if (t.type === 'none') return 1 / fps;
+  return t.duration;
+}
+function sceneStartTimes(scenes, fps){
+  const starts = [0];
+  for (let i = 1; i < scenes.length; i++)
+    starts.push(starts[i-1] + scenes[i-1].duration - boundaryOverlap(scenes, i, fps));
+  return starts;
+}
+
 // ---- Built-in character presets (from doodle-anim character work) ----
 const PRESETS = {
   an:   { skinC: '#f0d0b0', hairC: '#1a1a1a', hair: 'bowl',     clothC: '#6a9ab0', mouth: 'smile', eyeStyle: 'open', glasses: false, seed: 101 },
   binh: { skinC: '#e8b98a', hairC: '#6b3a26', hair: 'curly',    clothC: '#8aa860', mouth: 'smile', eyeStyle: 'open', glasses: false, seed: 102 },
   chi:  { skinC: '#fdf2ee', hairC: '#c9a25e', hair: 'pigtails', clothC: '#e8a0b0', mouth: 'smile', eyeStyle: 'open', glasses: false, seed: 103 },
   dung: { skinC: '#a06a42', hairC: '#1a1712', hair: 'afro',     clothC: '#e0a05a', mouth: 'smile', eyeStyle: 'open', glasses: false, seed: 104 },
+  // ---- Tấm Cám characters ----
+  tam:   { skinC: '#f2d3ae', hairC: '#141210', hair: 'strands', longHair: true,  clothC: '#8a5a3a', outfit: 'dress', aoDai: true, mouth: 'smile', eyeStyle: 'open', brows: 'soft',  seed: 201 },
+  cam:   { skinC: '#f5d8b8', hairC: '#1a1512', hair: 'buns',    clothC: '#e08aa0', outfit: 'dress', aoDai: true, mouth: 'flat',  eyeStyle: 'open', brows: 'angry', seed: 202 },
+  dighe: { skinC: '#e8c39e', hairC: '#2a2018', hair: 'bowl',    topknot: true,   clothC: '#7a5a9a', outfit: 'dress', aoDai: true, mouth: 'frown', eyeStyle: 'open', brows: 'angry', seed: 203 },
+  but:   { skinC: '#eecfa8', hairC: '#e8e4da', hair: 'strands', beard: 'white',  clothC: '#d8a83a', outfit: 'shirt', mouth: 'smile', eyeStyle: 'calm', brows: 'soft',  seed: 204 },
+  vua:   { skinC: '#f0d0a8', hairC: '#1a1a1a', hair: 'bowl',    crown: true,     clothC: '#e8b83a', outfit: 'shirt', mouth: 'flat',  eyeStyle: 'open', brows: 'none',  seed: 205 },
 };
 
 // ---- Timeline with phase continuity (walk cycle doesn't jump between segs) ----
 function makeTL(segs) {
   let phase = 0;
   const tl = [];
+  const ACTIONS = ['cry','kneel','sweep','bow','point','angry',
+    'punch','punch_hook','kick','kick_round','block','dodge','fall',
+    'handshake','hug','pat','give','push','pull'];
   for (const s of segs) {
     const dist = Math.hypot((s.x1 ?? 0) - (s.x0 ?? 0), (s.y1 ?? 0) - (s.y0 ?? 0));
     const dur = s.t1 - s.t0;
@@ -95,6 +152,7 @@ function makeTL(segs) {
       t0: s.t0, t1: s.t1, x0: s.x0, y0: s.y0, x1: s.x1, y1: s.y1,
       dir: s.dir ?? ((s.x1 ?? 0) >= (s.x0 ?? 0) ? 1 : -1),
       walk: s.m === 'walk', run: s.m === 'run', phase0: phase, speed,
+      action: ACTIONS.includes(s.m) ? s.m : null,
     });
     if (moving) phase += dur * speed * 0.085;
   }
@@ -169,11 +227,31 @@ function buildSceneHtml(scene, story, engineScripts, weatherSrc, bgDataUrl, W, H
   }).join('\n');
 
   const cam = scene.cam || {};
+  // Camera keyframes: {x:[..], y:[..], z:[..], t:[..]} — piecewise smooth interp;
+  // without t, linear over full duration (legacy {x:[a,b]} form).
   const camJs = `function(t){
     const d = ${dur};
-    const lx = (a) => a ? a[0] + (a[1] - a[0]) * Math.min(1, t / d) : 0;
-    const lz = (a) => a ? a[0] + (a[1] - a[0]) * Math.min(1, t / d) : 1;
-    return { x: lx(${JSON.stringify(cam.x || null)}), y: lx(${JSON.stringify(cam.y || null)}), z: lz(${JSON.stringify(cam.z || null)}) };
+    const keys = ${JSON.stringify(cam.t || null)};
+    const interp = (a) => {
+      if(!a || !a.length) return null;
+      if(!keys || keys.length !== a.length){
+        const u = Math.min(1, t/d);
+        return a[0] + (a[a.length-1]-a[0])*u;
+      }
+      if(t <= keys[0]) return a[0];
+      for(let i=0;i<keys.length-1;i++){
+        if(t <= keys[i+1]){
+          const u = (t-keys[i])/Math.max(1e-6, keys[i+1]-keys[i]);
+          const e = u*u*(3-2*u);
+          return a[i] + (a[i+1]-a[i])*e;
+        }
+      }
+      return a[a.length-1];
+    };
+    const gx = (v, fb) => { const r = interp(v); return r == null ? fb : r; };
+    return { x: gx(${JSON.stringify(cam.x || null)}, 0),
+             y: gx(${JSON.stringify(cam.y || null)}, 0),
+             z: gx(${JSON.stringify(cam.z || null)}, 1) };
   }`;
 
   const bgJs = bgDataUrl
@@ -336,9 +414,11 @@ async function main() {
 
   const tmpRoot = mkdtempSync(join(os.tmpdir(), 'doodle-story-'));
   const segFiles = [];
+  const renderedScenes = [];   // story.scenes entries parallel to segFiles
 
   for (const scene of story.scenes) {
     if (ONLY && scene.id !== ONLY) continue;
+    renderedScenes.push(scene);
     console.log(`\n[scene ${scene.id}] ${scene.duration}s ...`);
 
     let bgDataUrl = null;
@@ -389,11 +469,28 @@ async function main() {
   const listFile = join(tmpRoot, 'list.txt');
   writeFileSync(listFile, segFiles.map(s => `file '${s}'`).join('\n'));
 
+  // ---- Transitions between scenes (ffmpeg xfade) ----
+  const hasTransitions = renderedScenes.length > 1 &&
+    renderedScenes.slice(1).some(s => normTransition(s.transition).type !== 'none');
+  const starts = sceneStartTimes(renderedScenes, fps);
+  const totalDur = starts.length
+    ? starts[starts.length - 1] + renderedScenes[renderedScenes.length - 1].duration
+    : 0;
+  if (hasTransitions){
+    console.log(`\n🎞️ Transitions: ${renderedScenes.slice(1).map((s,i)=>{
+      const t = normTransition(s.transition);
+      return `${renderedScenes[i].id}→${s.id}:${t.type}@${t.duration}s`;
+    }).join(', ')}`);
+    console.log(`   Final duration: ${totalDur.toFixed(2)}s (was ${renderedScenes.reduce((a,s)=>a+s.duration,0).toFixed(1)}s)`);
+  }
+
   // ---- Audio: mix per-scene SFX (+ optional music) into one track ----
-  const mixedAudio = buildMixedAudio(story, storyDir, tmpRoot);
+  const mixedAudio = buildMixedAudio(story, storyDir, tmpRoot, starts, totalDur, renderedScenes);
 
   const outAbs = resolve(process.cwd(), outPath);
-  if (mixedAudio) {
+  if (hasTransitions){
+    assembleWithTransitions(segFiles, renderedScenes, mixedAudio, outAbs, fps, W, H, starts);
+  } else if (mixedAudio) {
     execFileSync('ffmpeg', ['-y', '-v', 'error',
       '-f', 'concat', '-safe', '0', '-i', listFile,
       '-i', mixedAudio,
@@ -406,28 +503,84 @@ async function main() {
 }
 
 /**
+ * Join scene segments with xfade transitions.
+ * Boundary i (i>=1): transition INTO renderedScenes[i], overlapping the
+ * tail of the accumulated video by boundaryOverlap().
+ * 'zoom' = zoompan (1.0x -> 1.6x) on the incoming head + fade blend.
+ */
+function assembleWithTransitions(segFiles, scenes, mixedAudio, outAbs, fps, W, H, starts){
+  const args = ['-y', '-v', 'error'];
+  segFiles.forEach(s => args.push('-i', s));
+  let audioIdx = segFiles.length;
+  if (mixedAudio) args.push('-i', mixedAudio);
+
+  const fc = [];
+  // Normalize timebases: concat outputs AVTB (1/1000000) while raw segments
+  // may carry the container timebase — xfade requires both inputs to match.
+  for (let i = 0; i < segFiles.length; i++) fc.push(`[${i}:v]settb=AVTB[s${i}]`);
+  let last = '[s0]';
+  let offset = scenes[0].duration;   // end-time of accumulated video so far
+  for (let i = 1; i < segFiles.length; i++){
+    const t = normTransition(scenes[i].transition);
+    const td = t.type === 'none' ? 1 / fps : t.duration;
+    const off = offset - td;
+    if (t.type === 'zoom'){
+      // zoom transition: incoming head zooms 1.6x -> 1.0x while fading in,
+      // then the untouched tail of the scene continues (concat).
+      const FR = Math.max(2, Math.round(td * fps));
+      fc.push(
+        `[s${i}]trim=0:${td.toFixed(4)},setpts=PTS-STARTPTS,` +
+        `scale=w='iw*(1.6-0.6*n/${FR})':h=-2:eval=frame,` +
+        `crop=${W}:${H}:x='(in_w-${W})/2':y='(in_h-${H})/2',setsar=1[zb${i}]`
+      );
+      fc.push(`[s${i}]trim=${td.toFixed(4)}:9999,setpts=PTS-STARTPTS[bt${i}]`);
+      fc.push(`${last}[zb${i}]xfade=transition=fade:duration=${td.toFixed(4)}:offset=${off.toFixed(3)}[vx${i}]`);
+      fc.push(`[vx${i}][bt${i}]concat=n=2:v=1:a=0[v${i}]`);
+    } else {
+      const xf = XFADE_MAP[t.type] || 'fade';
+      const effTd = t.type === 'none' ? 1 / fps : t.duration;
+      const effOff = offset - effTd;
+      fc.push(`${last}[s${i}]xfade=transition=${xf}:duration=${effTd.toFixed(4)}:offset=${effOff.toFixed(3)}[v${i}]`);
+    }
+    last = `[v${i}]`;
+    offset = offset + scenes[i].duration - td;
+  }
+  fc.push(`${last}format=yuv420p[vout]`);
+
+  args.push('-filter_complex', fc.join(';'),
+    '-map', '[vout]',
+    '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-pix_fmt', 'yuv420p',
+    '-r', String(fps));
+  if (mixedAudio){
+    args.push('-map', `${audioIdx}:a`, '-c:a', 'aac', '-shortest');
+  }
+  args.push(outAbs);
+  execFileSync('ffmpeg', args, { stdio: 'inherit' });
+}
+
+/**
  * Build a single mixed audio track for the whole story:
  *   - per-scene SFX clips: [{key, t0, volume(0-100), loop}] at absolute time
  *   - optional story.audio (music file) looped under everything at 40% volume
  * Returns path to a WAV file, or null if there is no audio at all.
  */
-function buildMixedAudio(story, storyDir, tmpRoot){
+function buildMixedAudio(story, storyDir, tmpRoot, starts, totalDur, renderedScenes){
+  const scenes = renderedScenes || story.scenes;
   const clips = [];
-  let t = 0;
-  for (const scene of story.scenes){
+  scenes.forEach((scene, i)=>{
+    const base = (starts && starts[i] != null) ? starts[i] : 0;
     for (const s of (scene.sfx || [])){
       if (!s || !s.key || !SFX_DUR[s.key]) continue;
       clips.push({
         key: s.key,
-        at: t + Math.max(0, +s.t0 || 0),
+        at: base + Math.max(0, +s.t0 || 0),
         vol: Math.min(1, Math.max(0, (+s.volume ?? 80) / 100)),
         loop: !!s.loop,
         sceneRemain: scene.duration - Math.max(0, +s.t0 || 0),
       });
     }
-    t += scene.duration;
-  }
-  const totalDur = t;
+  });
+  totalDur = totalDur || scenes.reduce((a, s)=>a + s.duration, 0);
   const hasMusic = !!story.audio;
   if (!clips.length && !hasMusic) return null;
 

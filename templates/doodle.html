@@ -306,6 +306,8 @@ function poseAt(segs, t){
     phase: s.phase0 + (s.walk ? (t-s.t0)*s.speed*0.085 : 0),
     speed: s.walk ? s.speed : 0,
     run: !!s.run,
+    action: s.action || null,   // stationary action: cry/kneel/sweep/bow/point/angry
+    actT: t - s.t0,             // time since segment start (for action cycles)
   };
 }
 
@@ -375,6 +377,12 @@ class Human extends DoodleChar {
     this.brows   = rng.pick(['none','none','soft','angry','sad']);
     this.glasses = rng.chance(0.14);
     this.headSquash = rng.range(0.9, 1.1);
+    // ---- costume / character options (set via attrs/presets) ----
+    this.beard   = opts.beard || null;    // 'white' | 'black' | null  (Ông Bụt)
+    this.crown   = !!opts.crown;          // mũ miện (Vua)
+    this.longHair= !!opts.longHair;       // tóc dài (Tấm)
+    this.topknot = !!opts.topknot;        // búi cao (Dì ghẻ)
+    this.aoDai   = !!opts.aoDai;          // áo dài cổ trang
   }
 
   headTop(){ return -(this.legLen + this.torsoH + this.neckLen + this.headR*1.85); }
@@ -459,12 +467,59 @@ class Human extends DoodleChar {
       roughStroke(ctx, [[-eyeDX+r*0.26, eyeY],[eyeDX-r*0.26, eyeY]], { seed:this.seed^0x18, wobble:0.3, width:1.2 });
     }
 
+    // ---- beard (Ông Bụt) ----
+    if(this.beard){
+      const bc = this.beard === 'white' ? '#e8e4da' : '#3a3128';
+      const wv = Math.sin((this._tNow||0)*2)*r*0.06;
+      const pts = [[-r*0.42, cy+r*0.42],[ -r*0.5+wv, cy+r*1.05],[-r*0.2+wv, cy+r*1.5],
+                   [0+wv, cy+r*1.62],[r*0.2+wv, cy+r*1.5],[r*0.5+wv, cy+r*1.05],[r*0.42, cy+r*0.42]];
+      shape(ctx, pts, { seed:this.seed^0x1a, fill:bc, alpha:0.35, tight:true, width:1.5 });
+    }
+
+    // ---- crown / mũ miện (Vua) ----
+    if(this.crown){
+      const cw = r*0.72, ch = r*0.42, cyy = cy - r*1.02;
+      const pts = [[-cw, cyy],[ -cw, cyy-ch],[ -cw*0.5, cyy-ch*0.45],[0, cyy-ch*1.15],
+                   [cw*0.5, cyy-ch*0.45],[cw, cyy-ch],[cw, cyy]];
+      shape(ctx, pts, { seed:this.seed^0x1b, fill:'#e8b83a', alpha:0.4, tight:true, width:1.6 });
+      dot(ctx, 0, cyy-ch*1.15, r*0.07, '#c0392b', 0.9);
+      dot(ctx, -cw*0.5, cyy-ch*0.45, r*0.05, '#c0392b', 0.85);
+      dot(ctx, cw*0.5, cyy-ch*0.45, r*0.05, '#c0392b', 0.85);
+    }
+
     this.drawHair(ctx, cy);
   }
 
   drawHair(ctx, cy){
     const r = this.headR, seed = this.seed^0x19;
     const top = cy - r*0.92;
+    // ---- Tấm Cám costumes: tóc dài / búi cao ----
+    if(this.longHair){
+      const rr = new RNG(seed^0x5a);
+      for(const s of [-1,1]){
+        for(let i=0;i<4;i++){
+          const hx = s*r*(0.55 + i*0.14);
+          const len = r*(1.6 + rr.next()*0.5);
+          const swayH = Math.sin((this._tNow||0)*1.8 + i)*r*0.08;
+          roughStroke(ctx, [[hx, top+r*0.1],[hx+s*r*0.1+swayH, top+r*0.5],[hx+swayH*1.6, top+len]],
+            { seed:seed+s*7+i, wobble:0.8, width:1.6 });
+        }
+      }
+      shape(ctx, arcPts(0, cy, r*1.0, Math.PI*1.02, Math.PI*1.98, 16)
+        .concat(arcPts(0, cy, r*0.72, Math.PI*1.98, Math.PI*1.02, 16)),
+        { seed, fill:this.hairC, alpha:0.32, tight:true, width:1.4 });
+      return;
+    }
+    if(this.topknot){
+      shape(ctx, ellipsePts(0, top-r*0.12, r*0.34, r*0.30, 14),
+        { seed:seed^0x6b, fill:this.hairC, alpha:0.32, tight:true, width:1.5 });
+      roughStroke(ctx, [[-r*0.2, top-r*0.3],[0, top-r*0.5],[r*0.2, top-r*0.3]],
+        { seed:seed^0x6c, wobble:0.6, width:1.4 });
+      shape(ctx, arcPts(0, cy, r*1.0, Math.PI*1.05, Math.PI*1.95, 16)
+        .concat(arcPts(0, cy, r*0.74, Math.PI*1.95, Math.PI*1.05, 16)),
+        { seed, fill:this.hairC, alpha:0.3, tight:true, width:1.4 });
+      return;
+    }
     switch(this.hair){
       case 'curly': {
         const rr = new RNG(seed);
@@ -524,32 +579,144 @@ class Human extends DoodleChar {
   draw(ctx, t, depthScale){
     const pose = poseAt(this.tl, t);
     this._lookDir = pose.dir;
+    this._tNow = t;
     const p = pose.phase;
     const walkAmt = pose.walking ? 1 : 0;
-    const bob = pose.walking ? -Math.abs(Math.sin(p))*this.h*(pose.run?0.04:0.022) : Math.sin(t*1.6+this.swayOff)*1.2;
-    const sway = pose.walking ? Math.sin(p)*(pose.run?0.05:0.02) : Math.sin(t*1.1+this.swayOff)*0.035;
+    // ---- stationary actions: cry/kneel/sweep/bow/point/angry ----
+    const action = pose.action || null;
+    const at = pose.actT || 0;
+    let bob = pose.walking ? -Math.abs(Math.sin(p))*this.h*(pose.run?0.04:0.022) : Math.sin(t*1.6+this.swayOff)*1.2;
+    let sway = pose.walking ? Math.sin(p)*(pose.run?0.05:0.02) : Math.sin(t*1.1+this.swayOff)*0.035;
+    let actLean = 0;      // extra torso lean (radians)
+    let actDrop = 0;      // extra body drop (kneel)
+    let headTilt = 0, headDY = 0;
+    // action arm/leg targets: [x, y] in local space (y-down), null = default swing
+    let actArmL = null, actArmR = null, actKick = null;
+    const syA = -(this.legLen + this.torsoH*0.88) + 2;   // shoulder line y
+    const swA = this.headR*0.52;                          // half shoulder width
+    const cyc = (period) => (at % period) / period;       // 0..1 repeating
+    const strike = (period=1.0) => Math.sin(Math.min(1, cyc(period)*1.12) * Math.PI); // out-and-back
+    const guardL = [-swA*0.7, syA - this.armLen*0.55];    // left hand guard pose
+    const guardR = [ swA*0.7, syA - this.armLen*0.55];    // right hand guard pose
+    if(action === 'cry'){
+      bob = Math.sin(t*16)*2.2; sway = Math.sin(t*2.1)*0.02;
+      headTilt = 0.28; headDY = 4; actLean = 0.10;
+    } else if(action === 'bow'){
+      actLean = 0.55; headTilt = 0.35; headDY = 6; bob = 0;
+    } else if(action === 'sweep'){
+      bob = -Math.abs(Math.sin(t*4))*3; sway = Math.sin(t*4)*0.05; actLean = 0.12;
+    } else if(action === 'angry'){
+      const stomp = Math.abs(Math.sin(t*5.2)) > 0.72 ? 1 : 0;
+      bob = -stomp*4; sway = 0; actLean = -0.05;
+    } else if(action === 'kneel'){
+      actDrop = this.legLen*0.52; bob = 0; sway = 0;
+    } else if(action === 'point'){
+      bob = 0; sway = Math.sin(t*1.4)*0.015;
+      actArmR = [swA + this.armLen*1.05, syA - this.armLen*0.15];
+    } else if(action === 'punch'){
+      // đấm thẳng: tay phải đâm ra nhanh, tay trái thủ
+      const e = strike(1.0);
+      actArmR = [swA + this.armLen*1.30*e, syA - this.armLen*0.05*e];
+      actArmL = guardL; actLean = 0.10*e; bob = 0; sway = 0;
+    } else if(action === 'punch_hook'){
+      // đấm móc: tay vòng từ dưới lên
+      const ph = Math.min(1, cyc(1.1)*1.12) * Math.PI;
+      actArmR = [swA + Math.sin(ph)*this.armLen*1.05, syA + Math.cos(ph)*this.armLen*0.65];
+      actArmL = guardL; actLean = 0.08*Math.sin(ph); bob = 0; sway = 0;
+    } else if(action === 'kick'){
+      // đá thẳng: chân trước đạp ra, 2 tay thủ
+      const e = strike(1.1);
+      actKick = [this.legLen*1.15*e, -this.legLen*0.38*e];
+      actArmL = guardL; actArmR = guardR;
+      actLean = -0.09*e; bob = 0; sway = 0;
+    } else if(action === 'kick_round'){
+      // đá vòng: chân quét ngang theo vòng cung
+      const ph = Math.min(1, cyc(1.2)*1.12) * Math.PI;
+      actKick = [Math.sin(ph)*this.legLen*1.20, -this.legLen*0.22*Math.sin(ph*0.5+0.3)];
+      actArmL = guardL; actArmR = guardR;
+      actLean = -0.06*Math.sin(ph); bob = 0; sway = 0;
+    } else if(action === 'block'){
+      // đỡ đòn: 2 tay chéo trước mặt, hơi khụy
+      actArmL = [ swA*0.45, syA - this.headR*1.25];
+      actArmR = [-swA*0.45, syA - this.headR*1.05];
+      actDrop = this.legLen*0.10; bob = Math.sin(t*30)*1.2; sway = 0;
+    } else if(action === 'dodge'){
+      // né tránh: người ngả ra sau
+      const e = Math.sin(Math.min(1, at/0.7) * Math.PI);
+      actLean = -0.38*e; bob = -4*e; sway = 0;
+      actArmL = [-swA - this.armLen*0.6, syA - this.armLen*0.3];
+      actArmR = [ swA + this.armLen*0.6, syA - this.armLen*0.3];
+    } else if(action === 'fall'){
+      // ngã: cả người đổ về phía trước
+      const k = Math.min(1, at/0.8), ke = k*k;
+      actLean = 1.30*ke; sway = 0;
+      bob = ke >= 1 ? -Math.abs(Math.sin((at-0.8)*10))*3*Math.exp(-(at-0.8)*3) : 0;
+      actArmL = [-swA - this.armLen*0.8, syA + this.armLen*0.4];
+      actArmR = [ swA + this.armLen*0.8, syA + this.armLen*0.4];
+    } else if(action === 'handshake'){
+      // bắt tay: tay phải đưa ra ngang, rung nhẹ
+      const sh = Math.sin(at*9)*5*(at < 2 ? 1 : 0.25);
+      actArmR = [swA + this.armLen*1.0, syA + this.armLen*0.12 + sh];
+      actLean = 0.06; bob = 0;
+    } else if(action === 'hug'){
+      // ôm: 2 tay dang rộng
+      actArmL = [-swA - this.armLen*1.10, syA + this.armLen*0.30];
+      actArmR = [ swA + this.armLen*1.10, syA + this.armLen*0.30];
+      actLean = 0.05; bob = Math.sin(t*2)*2; sway = 0;
+    } else if(action === 'pat'){
+      // vỗ vai: tay phải giơ cao vỗ nhẹ
+      actArmR = [swA + this.armLen*0.42, syA - this.armLen*0.92 + Math.sin(at*7)*6];
+      bob = 0;
+    } else if(action === 'give'){
+      // đưa đồ: tay phải đưa về phía trước, hơi cúi
+      actArmR = [swA + this.armLen*0.95, syA + this.armLen*0.52];
+      actLean = 0.09; bob = 0;
+    } else if(action === 'push'){
+      // đẩy: 2 tay đẩy ra phía trước
+      const pc = Math.sin(Math.min(1, cyc(1.2)*1.12) * Math.PI);
+      actArmL = [this.armLen*(0.55+0.35*pc), syA + this.armLen*0.10];
+      actArmR = [swA + this.armLen*(0.75+0.35*pc), syA - this.armLen*0.05*pc];
+      actLean = 0.13*pc; bob = 0; sway = 0;
+    } else if(action === 'pull'){
+      // kéo: 2 tay co về, người ngả ra sau
+      actArmL = [this.armLen*0.15, syA + this.armLen*0.42];
+      actArmR = [swA + this.armLen*0.30, syA + this.armLen*0.42];
+      actLean = -0.10; bob = 0; sway = 0;
+    }
     const blink = this.blinking(t);
 
     scribbleShadow(ctx, pose.x, pose.y+2, this.headR*1.35*depthScale, this.seed^0x20);
 
     this.begin(ctx, pose, depthScale);
-    ctx.translate(0, bob);
-    ctx.rotate(sway);
+    ctx.translate(0, bob + actDrop);
+    ctx.rotate(sway + actLean);
 
     const hipY = -this.legLen, shoulderY = -(this.legLen + this.torsoH*0.88);
     const shoulderW = this.headR*0.52;
 
-    // legs (behind torso)
+    // legs (behind torso) — action variants: kneel (folded) / angry (stomp)
     const stride = this.legLen*(pose.run?0.62:0.42)*walkAmt;
     const liftH  = this.legLen*(pose.run?0.22:0.16);
-    for(const s of [-1,1]){
-      const ph = p + (s<0 ? Math.PI : 0);
-      const fx = Math.sin(ph)*stride;
-      const fy = -Math.max(0, Math.cos(ph))*liftH*walkAmt;
-      const knee = [ (0+fx)/2 + this.legLen*0.06, hipY + this.legLen*0.5 ];
-      roughStroke(ctx, [[0, hipY], knee, [fx, fy]], { seed:this.seed+s*53, wobble:0.9, width:1.6 });
-      // foot
-      roughStroke(ctx, [[fx, fy],[fx + this.legLen*0.14*walkAmt + 4, fy]], { seed:this.seed+s*59, wobble:0.4, width:1.6 });
+    if(action === 'kneel'){
+      for(const s of [-1,1]){  // quỳ: đùi gập, chân xếp dưới thân
+        roughStroke(ctx, [[s*5, hipY],[s*16, hipY+this.legLen*0.38],[s*4, hipY+this.legLen*0.55]],
+          { seed:this.seed+s*53, wobble:0.9, width:1.7 });
+        roughStroke(ctx, [[s*4, hipY+this.legLen*0.55],[s*22, hipY+this.legLen*0.55]],
+          { seed:this.seed+s*59, wobble:0.4, width:1.6 });
+      }
+    } else {
+      const stomp = action === 'angry' && Math.abs(Math.sin(t*5.2)) > 0.72;
+      for(const s of [-1,1]){
+        const ph = p + (s<0 ? Math.PI : 0);
+        let fx = Math.sin(ph)*stride;
+        let fy = -Math.max(0, Math.cos(ph))*liftH*walkAmt;
+        if(stomp && s > 0){ fx = 10; fy = -this.legLen*0.38; }  // chân dậm
+        else if(actKick && s > 0){ fx = actKick[0]; fy = actKick[1]; }  // đá: chân trước vung ra
+        const knee = [ (0+fx)/2 + this.legLen*0.06, hipY + this.legLen*0.5 ];
+        roughStroke(ctx, [[0, hipY], knee, [fx, fy]], { seed:this.seed+s*53, wobble:0.9, width:1.6 });
+        // foot
+        roughStroke(ctx, [[fx, fy],[fx + this.legLen*0.14*walkAmt + 4, fy]], { seed:this.seed+s*59, wobble:0.4, width:1.6 });
+      }
     }
 
     // torso
@@ -570,20 +737,71 @@ class Human extends DoodleChar {
     roughStroke(ctx, [[-3, shoulderY-2],[-3, shoulderY-this.neckLen]], { seed:this.seed^0x23, wobble:0.3, width:1.5 });
     roughStroke(ctx, [[ 3, shoulderY-2],[ 3, shoulderY-this.neckLen]], { seed:this.seed^0x24, wobble:0.3, width:1.5 });
 
-    // arms (flail overhead when panicking, swing when walking, sway when idle)
+    // arms — action variants override hand targets
     const armSwing = (pose.walking ? Math.sin(p)*0.5 : 0) + Math.sin(t*1.3+this.swayOff)*0.06;
+    let broomTip = null;  // sweep: vẽ chổi
     for(const s of [-1,1]){
       const sx = s*shoulderW, sy = shoulderY + 2;
       const flail = Math.sin(p*2 + (s<0?0:Math.PI))*0.4;
       const sw = pose.run ? (Math.PI*0.85 + s*0.30 + flail) : (s<0 ? armSwing : -armSwing);
-      const hx = sx + s*this.armLen*0.28 + Math.sin(sw)*this.armLen*0.8;
-      const hy = sy + Math.cos(sw)*this.armLen*0.85;
-      const elbow = [ (sx+hx)/2 + s*3, (sy+hy)/2 + 2 ];
+      let hx = sx + s*this.armLen*0.28 + Math.sin(sw)*this.armLen*0.8;
+      let hy = sy + Math.cos(sw)*this.armLen*0.85;
+      let elbowOut = 3;
+      if(action === 'cry'){            // tay che mặt
+        hx = s*shoulderW*0.45; hy = sy - this.headR*1.55; elbowOut = 10;
+      } else if(action === 'sweep'){    // hai tay cầm chổi, đưa qua lại
+        const swp = Math.sin(t*4.2);
+        hx = swp*this.armLen*0.62; hy = sy + this.armLen*0.52; elbowOut = 5;
+        if(s > 0) broomTip = [hx, hy];
+      } else if(action === 'bow'){      // tay buông thõng
+        hx = s*shoulderW*0.75; hy = sy + this.armLen*0.95; elbowOut = 2;
+      } else if(action === 'point'){     // chỉ tay (tay phải)
+        if(s > 0){ hx = this.armLen*1.02; hy = sy - 6; elbowOut = 2; }
+        else { hx = s*shoulderW*0.7; hy = sy + this.armLen*0.85; elbowOut = 2; }
+      } else if(action === 'angry'){    // chống nạnh
+        hx = s*shoulderW*1.5; hy = sy + this.torsoH*0.52; elbowOut = 14;
+      } else if(action === 'kneel'){    // tay đặt lên đùi
+        hx = s*shoulderW*0.9; hy = sy + this.torsoH*0.78; elbowOut = 4;
+      } else if(actArmL || actArmR){  // combat/interaction: tay theo target tính sẵn
+        const ov = s < 0 ? actArmL : actArmR;
+        if(ov){ hx = ov[0]; hy = ov[1]; elbowOut = 4; }
+      }
+      const elbow = [ (sx+hx)/2 + s*elbowOut, (sy+hy)/2 + 2 ];
       roughStroke(ctx, [[sx, sy], elbow, [hx, hy]], { seed:this.seed+s*61, wobble:0.8, width:1.6 });
+      if(action === 'point' && s > 0){
+        roughStroke(ctx, [[hx, hy],[hx+14, hy-2]], { seed:this.seed+s*63, wobble:0.3, width:1.5 }); // ngón trỏ
+      }
       shape(ctx, ellipsePts(hx, hy, 3.2, 3.2, 10), { seed:this.seed+s*67, fill:this.skinC, alpha:0.2, tight:true, width:1.2 });
     }
+    if(broomTip){  // cán chổi + đầu chổi
+      const bx = broomTip[0] + 6, by = broomTip[1];
+      roughStroke(ctx, [[broomTip[0]-14, by-26],[bx, by+this.legLen*0.75]], { seed:this.seed^0x71, wobble:0.7, width:2.2 });
+      const br = [[bx-12, by+this.legLen*0.75],[bx+12, by+this.legLen*0.75],[bx+8, by+this.legLen*0.95],[bx-8, by+this.legLen*0.95]];
+      shape(ctx, br, { seed:this.seed^0x72, fill:'#b89a5a', alpha:0.3, tight:true, width:1.4 });
+    }
 
+    // head: tilt + facial overrides per action
+    const _mouth = this.mouth, _brows = this.brows;
+    if(action === 'cry'){ this.mouth = 'open'; this.brows = 'sad'; }
+    else if(action === 'angry'){ this.mouth = 'frown'; this.brows = 'angry'; }
+    else if(action === 'punch' || action === 'punch_hook' || action === 'kick' || action === 'kick_round'){ this.brows = 'angry'; }
+    else if(action === 'block' || action === 'dodge' || action === 'fall'){ this.brows = 'sad'; }
+    else if(action === 'hug' || action === 'handshake' || action === 'pat'){ this.mouth = 'smile'; }
+    const headCY = -(this.legLen + this.torsoH + this.neckLen + this.headR*0.82);
+    ctx.save();
+    ctx.translate(0, headCY + headDY);
+    ctx.rotate(headTilt);
+    ctx.translate(0, -(headCY + headDY));
     this.drawHead(ctx, t, blink);
+    ctx.restore();
+    this.mouth = _mouth; this.brows = _brows;
+    if(action === 'cry'){  // nước mắt rơi
+      for(const s of [-1,1]){
+        const tx = s*this.headR*0.38, ty = headCY + this.headR*0.12;
+        const drop = ((t*2.2) + (s>0?0.5:0)) % 1;
+        dot(ctx, tx, ty + drop*this.headR*0.55, 2.2, '#6ab0e0', 0.85*(1-drop*0.6));
+      }
+    }
     this.drawEmotes(ctx, t);
     this.end(ctx);
   }
