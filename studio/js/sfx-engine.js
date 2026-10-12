@@ -56,6 +56,7 @@ const SFX_CATALOG = [
     {n:'Xì xào', d:'3.0s • loop', k:'whisper', loop:true},
     {n:'Loa phóng thanh', d:'2.0s', k:'announce'},
     {n:'Rót trà', d:'2.5s', k:'tea'},
+    {n:'Nhả khói thuốc', d:'1.2s', k:'smoke-puff'},
   ]},
   {id:'magic',   name:'✨ Huyền ảo', items:[
     {n:'Chuông ngân', d:'3.0s', k:'bell'},
@@ -88,7 +89,7 @@ const SFX_DUR = {
   chicken:2, cicada:5, buffalo:2.5, horse:1.8, crow:1.5,
   motorbike:3, bicycle:2, horn:0.8, boat:3.5,
   footstep:1, broom:1.5, splash:1.5, punch:0.6, thud:0.9, clap:1.2, cry:2.5, laugh:2,
-  gallop:2, firecracker:3, fire:4, pour:2.5, chop:0.8, whisper:3, announce:2, tea:2.5,
+  gallop:2, firecracker:3, fire:4, pour:2.5, chop:0.8, whisper:3, announce:2, tea:2.5, "smoke-puff":1.2,
   bell:3, magic:2, whoosh:2.5,
   crowd:5, drum:4, applause:3, nightquiet:6,
   mus_happy:4, mus_sad:4, mus_magic:4, mus_tense:4, mus_fest:4,
@@ -371,6 +372,15 @@ class SFXEngine {
         for(let i=0;i<12;i++){ const o=O('sine',1800+Math.random()*1500), og=G(0), st=t+0.3+Math.random()*(dur-0.6);
           og.gain.setValueAtTime(0.05,st); og.gain.exponentialRampToValueAtTime(0.001,st+0.07);
           o.connect(og); og.connect(dest); o.start(st); o.stop(st+0.08); srcs.push(o); }
+        break; }
+      case 'smoke-puff': { // nhả khói thuốc: soft breathy exhale, lowpass noise
+        dur=1.2; const n=N(dur), f=F('lowpass',700), g=G(0);
+        g.gain.setValueAtTime(0.001,t); g.gain.linearRampToValueAtTime(0.22,t+0.25);
+        g.gain.setValueAtTime(0.22,t+0.5); g.gain.exponentialRampToValueAtTime(0.001,t+dur);
+        startF(n,f,g,0,dur);
+        const n2=N(0.4), f2=F('highpass',2500), g2=G(0); // faint crackle at start
+        g2.gain.setValueAtTime(0.06,t); g2.gain.exponentialRampToValueAtTime(0.001,t+0.4);
+        startF(n2,f2,g2,0,0.4);
         break; }
       case 'bell': {
         dur=3;

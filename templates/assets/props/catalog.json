@@ -1356,5 +1356,33 @@
    "background",
    "tamcam"
   ]
+ },
+ {
+  "id": "cigarette",
+  "name": "Điếu thuốc",
+  "category": "tamcam",
+  "file": "props/cigarette.svg",
+  "tags": [
+   "thuốc",
+   "thuốc lá",
+   "cigarette",
+   "smoke",
+   "hút thuốc",
+   "tamcam"
+  ]
+ },
+ {
+  "id": "fallen-leaves",
+  "name": "Lá rụng",
+  "category": "nature",
+  "file": "props/fallen-leaves.svg",
+  "tags": [
+   "lá",
+   "lá rụng",
+   "lá khô",
+   "leaves",
+   "sân",
+   "quét"
+  ]
  }
 ]

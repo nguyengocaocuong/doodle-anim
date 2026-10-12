@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <g>
+    <!-- fallen dry leaves scattered on ground, doodle style -->
+    <!-- leaf 1 -->
+    <path d="M40.0 130.0 C52.0 118.0 68.0 118.0 76.0 130.0 C68.0 142.0 52.0 142.0 40.0 130.0 Z" fill="#d9a441" fill-opacity="0.88" stroke="#3d372f" stroke-width="3.0" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M42.0 130.0 L74.0 130.0" stroke="#a87f2e" stroke-width="2.0" stroke-linecap="round"/>
+    <!-- leaf 2 -->
+    <path d="M95.0 145.0 C105.0 135.0 120.0 136.0 126.0 147.0 C118.0 157.0 103.0 156.0 95.0 145.0 Z" fill="#c98a3a" fill-opacity="0.88" stroke="#3d372f" stroke-width="3.0" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M97.0 146.0 L124.0 146.0" stroke="#9a6a28" stroke-width="2.0" stroke-linecap="round"/>
+    <!-- leaf 3 -->
+    <path d="M130.0 120.0 C138.0 112.0 150.0 113.0 155.0 122.0 C148.0 130.0 136.0 129.0 130.0 120.0 Z" fill="#e0b45a" fill-opacity="0.88" stroke="#3d372f" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- leaf 4 -->
+    <path d="M60.0 155.0 C68.0 148.0 80.0 149.0 84.0 157.0 C77.0 164.0 66.0 163.0 60.0 155.0 Z" fill="#b57a32" fill-opacity="0.85" stroke="#3d372f" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- leaf 5 -->
+    <path d="M140.0 150.0 C150.0 142.0 163.0 143.0 168.0 153.0 C160.0 162.0 147.0 160.0 140.0 150.0 Z" fill="#d9a441" fill-opacity="0.85" stroke="#3d372f" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M142.0 151.0 L166.0 152.0" stroke="#a87f2e" stroke-width="1.8" stroke-linecap="round"/>
+    <!-- leaf 6 (small) -->
+    <path d="M85.0 115.0 C91.0 109.0 100.0 110.0 103.0 117.0 C97.0 123.0 89.0 122.0 85.0 115.0 Z" fill="#c98a3a" fill-opacity="0.85" stroke="#3d372f" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- leaf 7 (small) -->
+    <path d="M110.0 165.0 C116.0 160.0 124.0 161.0 127.0 167.0 C121.0 172.0 114.0 171.0 110.0 165.0 Z" fill="#e0b45a" fill-opacity="0.85" stroke="#3d372f" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- ground shadow hints -->
+    <path d="M35.0 140.0 C60.0 148.0 90.0 150.0 120.0 148.0" fill="none" stroke="#8a7a5a" stroke-width="1.6" stroke-linecap="round" opacity="0.35"/>
+  </g>
+</svg>

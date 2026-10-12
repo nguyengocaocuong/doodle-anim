@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <g>
+    <!-- cigarette body: white cylinder, slight tilt -->
+    <path d="M55.0 105.0 L57.2 102.8 L142.5 88.5 L144.8 90.7 L142.6 93.0 L57.3 107.3 Z" fill="#fdfdf8" fill-opacity="0.92" stroke="#3d372f" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- filter band -->
+    <path d="M55.0 105.0 L57.2 102.8 L72.0 100.2 L74.3 102.4 L72.1 104.7 L57.3 107.3 Z" fill="#e8c96a" fill-opacity="0.9" stroke="#3d372f" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- burning tip: orange-red glow -->
+    <path d="M142.5 88.5 L144.8 90.7 L142.6 93.0 L140.3 90.8 Z" fill="#ff5a2a" fill-opacity="0.95" stroke="#b3300f" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- ember glow dots -->
+    <circle cx="147.5" cy="90.5" r="3.2" fill="#ffb02e" fill-opacity="0.85"/>
+    <circle cx="151.0" cy="89.0" r="2.0" fill="#ff7a3d" fill-opacity="0.7"/>
+    <!-- smoke wisp rising from tip -->
+    <path d="M148.0 84.0 C152.0 76.0 146.0 68.0 150.5 60.0 C154.0 53.5 150.0 46.0 153.5 38.5" fill="none" stroke="#b8b4ac" stroke-width="3.0" stroke-linecap="round" opacity="0.55"/>
+    <path d="M152.0 82.0 C155.5 75.0 150.5 68.5 154.0 61.5" fill="none" stroke="#cfccc4" stroke-width="2.0" stroke-linecap="round" opacity="0.4"/>
+    <!-- ash line near tip -->
+    <path d="M136.0 89.5 L138.2 91.7" stroke="#9a968c" stroke-width="2.2" stroke-linecap="round" opacity="0.8"/>
+  </g>
+</svg>
