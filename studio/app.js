@@ -241,7 +241,7 @@ function renderLibrary(){
   const grid = $('#libGrid'); grid.innerHTML = '';
   const hint = $('#libHint');
   if (hint) hint.textContent = state.libTab === 'sfx'
-    ? '▶ bấm để nghe thử • double-click để thêm vào scene'
+    ? 'Click để nghe thử • ＋ hoặc double-click để thêm vào scene'
     : state.libTab === 'fx'
     ? '🌦️ bật/tắt hiệu ứng thời tiết • 😀 click emoji để thêm vào canvas'
     : state.libTab === 'props'
@@ -565,11 +565,28 @@ function renderSfxLibrary(grid){
     const d = document.createElement('div');
     d.className = 'sfx-item';
     d.innerHTML = `
-      <button class="sfx-play" title="Nghe thử">▶</button>
-      <div class="sfx-info"><div class="sfx-name">${it.n}</div><div class="sfx-meta">${it.d}</div></div>`;
-    d.querySelector('.sfx-play').addEventListener('click', (e)=>{
+      <button class="sfx-play" title="Nghe thử" tabindex="-1">▶</button>
+      <div class="sfx-info"><div class="sfx-name">${it.n}</div><div class="sfx-meta">${it.d}</div></div>
+      <button class="sfx-add" title="Thêm vào scene hiện tại">＋</button>`;
+    const playBtn = d.querySelector('.sfx-play');
+    // single click anywhere on the item = preview toggle (with visual feedback)
+    d.addEventListener('click', (e)=>{
+      if (e.target.closest('.sfx-add')) return; // add button handled below
+      const wasPlaying = d.classList.contains('previewing');
+      sfxEngine.preview(it.k, playBtn);
+      document.querySelectorAll('.sfx-item.previewing').forEach(x=>x.classList.remove('previewing'));
+      if (!wasPlaying){
+        d.classList.add('previewing');
+        // auto-clear highlight when the synth finishes
+        const dur = (typeof SFX_DUR !== 'undefined' && SFX_DUR[it.k]) || 2;
+        clearTimeout(d._pvT);
+        d._pvT = setTimeout(()=>d.classList.remove('previewing'), (dur + 0.4) * 1000);
+      }
+    });
+    // ＋ button = add to current scene (double-click also works)
+    d.querySelector('.sfx-add').addEventListener('click', (e)=>{
       e.stopPropagation();
-      sfxEngine.preview(it.k, e.currentTarget);
+      addSfxToScene(it.k);
     });
     // double-click = add to current scene
     d.addEventListener('dblclick', ()=>addSfxToScene(it.k));
@@ -2302,6 +2319,54 @@ seedDemo();
 syncAll();
 pushHistory(); // baseline: undo returns to the seeded project
 updateUndoBtns();
+initPanelResize(); // VS Code-style draggable sidebar widths (persisted)
 requestAnimationFrame(loop);
 setTimeout(()=>toast('💡 Kéo nhân vật từ thư viện vào canvas để bắt đầu!'), 600);
 })();
+
+// ---------- Panel resize (Bug 1): drag handles between Library|Canvas|Properties ----------
+function initPanelResize(){
+  const cfg = [
+    {handle:'#rhLib',   panel:'#library', key:'doodle-lib-width',   min:180, max:420, def:230},
+    {handle:'#rhProps',  panel:'#props',   key:'doodle-props-width', min:220, max:480, def:250},
+  ];
+  cfg.forEach(({handle, panel, key, min, max, def})=>{
+    const h = document.querySelector(handle), p = document.querySelector(panel);
+    if (!h || !p) return;
+    // restore saved width
+    let w = parseInt(localStorage.getItem(key) || '', 10);
+    if (w >= min && w <= max) p.style.width = w + 'px';
+    else p.style.width = def + 'px';
+    h.addEventListener('pointerdown', (e)=>{
+      e.preventDefault();
+      h.classList.add('dragging');
+      document.body.classList.add('resizing');
+      h.setPointerCapture(e.pointerId);
+      const startX = e.clientX;
+      const startW = p.getBoundingClientRect().width;
+      const isLeft = panel === '#library'; // library grows rightward, props grows leftward
+      const move = (ev)=>{
+        const dx = ev.clientX - startX;
+        let nw = isLeft ? startW + dx : startW - dx;
+        nw = Math.max(min, Math.min(max, nw));
+        p.style.width = nw + 'px';
+      };
+      const up = ()=>{
+        h.classList.remove('dragging');
+        document.body.classList.remove('resizing');
+        h.removeEventListener('pointermove', move);
+        h.removeEventListener('pointerup', up);
+        h.removeEventListener('pointercancel', up);
+        try{ localStorage.setItem(key, String(Math.round(p.getBoundingClientRect().width))); }catch(_){}
+      };
+      h.addEventListener('pointermove', move);
+      h.addEventListener('pointerup', up);
+      h.addEventListener('pointercancel', up);
+    });
+    // double-click a handle = reset to default width
+    h.addEventListener('dblclick', ()=>{
+      p.style.width = def + 'px';
+      try{ localStorage.removeItem(key); }catch(_){}
+    });
+  });
+}

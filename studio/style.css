@@ -43,12 +43,24 @@ body{
 .btn.small{padding:5px 10px; font-size:12px}
 .btn:disabled{opacity:.4; cursor:default}
 
+/* ---------- RESIZE HANDLES (VS Code style) ---------- */
+.resize-handle{
+  width:7px; flex-shrink:0; cursor:col-resize;
+  position:relative; z-index:5; background:transparent;
+  transition:background .15s;
+}
+.resize-handle::after{
+  content:''; position:absolute; inset:0 -4px; /* wider hit area */
+}
+.resize-handle:hover, .resize-handle.dragging{background:var(--accent)}
+body.resizing, body.resizing *{cursor:col-resize !important; user-select:none !important}
+
 /* ---------- MAIN LAYOUT ---------- */
 main{flex:1; display:flex; min-height:0}
 
 /* ---------- LIBRARY ---------- */
 #library{
-  width:230px; background:var(--panel);
+  width:230px; flex-shrink:0; background:var(--panel);
   border-right:1px solid var(--border);
   display:flex; flex-direction:column;
 }
@@ -144,7 +156,7 @@ main{flex:1; display:flex; min-height:0}
 
 /* ---------- PROPERTIES ---------- */
 #props{
-  width:250px; background:var(--panel);
+  width:250px; flex-shrink:0; background:var(--panel);
   border-left:1px solid var(--border);
   overflow-y:auto; padding:14px;
 }
@@ -250,15 +262,20 @@ main{flex:1; display:flex; min-height:0}
   cursor:pointer; transition:all .15s;
 }
 .sfx-item:hover{border-color:var(--accent)}
+.sfx-item.previewing{border-color:var(--accent); box-shadow:0 0 10px rgba(108,140,255,.45); background:#262c3d}
 .sfx-play{
   width:30px; height:30px; border-radius:50%; border:none; flex-shrink:0;
-  background:var(--accent); color:#fff; font-size:12px; cursor:pointer;
+  background:var(--accent); color:#fff; font-size:12px; cursor:pointer; pointer-events:none;
 }
-.sfx-play:hover{background:#5a78f0}
-.sfx-play.playing{background:var(--danger)}
-.sfx-info{flex:1; min-width:0}
+.sfx-item.previewing .sfx-play{background:var(--danger)}
+.sfx-info{flex:1; min-width:0; pointer-events:none}
 .sfx-name{font-size:12px; font-weight:600}
 .sfx-meta{font-size:10px; color:var(--muted)}
+.sfx-add{
+  width:28px; height:28px; border-radius:8px; border:1px solid var(--border); flex-shrink:0;
+  background:var(--panel); color:var(--muted); font-size:15px; cursor:pointer; line-height:1;
+}
+.sfx-add:hover{background:var(--accent); border-color:var(--accent); color:#fff}
 .lib-empty{grid-column:1/-1; color:var(--muted); font-size:12px; padding:12px; text-align:center}
 
 /* ---------- AUDIO TIMELINE ---------- */
