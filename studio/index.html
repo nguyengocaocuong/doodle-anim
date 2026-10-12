@@ -18,7 +18,9 @@
   </select>
   <div class="spacer"></div>
   <button id="btnPreview" class="btn primary" title="Xem thử toàn bộ">▶ Preview</button>
+  <button id="btnPause" class="btn" title="Tạm dừng / tiếp tục (Space)" disabled>⏸</button>
   <button id="btnStop" class="btn" title="Dừng preview" disabled>⏹</button>
+  <button id="btnLoop" class="btn" title="Lặp lại preview">🔁</button>
   <button id="btnUndo" class="btn" title="Hoàn tác (Ctrl+Z)" disabled>↩️</button>
   <button id="btnRedo" class="btn" title="Làm lại (Ctrl+Shift+Z)" disabled>↪️</button>
   <button id="btnExportHTML" class="btn" title="Xuất file HTML chạy độc lập">🌐 HTML</button>
@@ -49,7 +51,9 @@
   <section id="stageWrap">
     <div id="stageBar">
       <span id="sceneLabel">Scene 1</span>
+      <span id="pvTime" class="pv-time"></span>
       <span id="canvasHint">Kéo nhân vật từ thư viện vào • Kéo để di chuyển • Click để chọn • Del để xóa • Shift+Click: thêm waypoint</span>
+      <div id="pvBar" class="pv-bar" hidden><i></i></div>
     </div>
     <div id="stageScroll">
       <div id="stageBox">

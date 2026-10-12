@@ -101,6 +101,11 @@ const state = {
   playSceneIdx: 0,
   playT0: 0,
   playElapsed: null,    // seconds into current playing scene (for waypoint playback)
+  playBaseOffset: 0,    // total seconds of scenes before playSceneIdx (for progress)
+  paused: false,        // preview pause flag
+  pauseElapsed: 0,      // frozen scene-time while paused
+  loopPreview: false,   // loop the whole preview
+  _pvMix: null,         // active preview audio handle
   dragChar: null,
   dragOffset: {x:0, y:0},
   libTab: 'humans',
@@ -1024,27 +1029,28 @@ function updateSubtitle(){
 let lastFrame = 0;
 function loop(ts){
   animT = ts;
-  if (state.playing){
+  if (state.playing && !state.paused){
     const sc = state.project.scenes[state.playSceneIdx];
     if (sc){
       const el = (ts - state.playT0)/1000;
       state.playElapsed = el;
       if (el >= sc.duration){
-        // next scene
+        // next scene (or loop / finish)
         if (state.playSceneIdx < state.project.scenes.length-1){
-          state.playSceneIdx++;
-          state.activeScene = state.playSceneIdx;
-          state.playT0 = ts;
-          syncProps(); renderTimeline();
-          flashTransition(state.project.scenes[state.playSceneIdx]);
+          enterPreviewScene(state.playSceneIdx+1, 0);
+        } else if (state.loopPreview){
+          enterPreviewScene(0, 0);
         } else {
           stopPreview(); toast('Preview xong');
         }
       }
     }
+  } else if (state.playing && state.paused){
+    state.playElapsed = state.pauseElapsed; // frozen frame
   }
   draw();
   drawFxLayer(ts);
+  updatePreviewUI();
   requestAnimationFrame(loop);
 }
 
@@ -1192,6 +1198,12 @@ document.addEventListener('keydown', (e)=>{
   }
   if ((e.key==='Delete'||e.key==='Backspace') && state.selectedChar){
     deleteSelectedChar();
+  }
+  if (e.code==='Space' && state.playing){
+    // skip when a button is focused: native Space already activates it
+    if (tag==='BUTTON') return;
+    e.preventDefault();
+    togglePause();
   }
 });
 function deleteSelectedChar(){
@@ -1521,6 +1533,7 @@ function renderTimeline(){
       <div class="s-title">${i+1}. ${escHtml(sc.dialogue?.split('\n')[0]||'(chưa có thoại)')}</div>
       <div class="s-meta">⏱ ${sc.duration}s • 🧍 ${sc.characters.length}${(sc.props||[]).length?` • 🖼️ ${sc.props.length}`:''}${wpCount?` • 📍 ${wpCount}`:''}${sfxCount?` • 🔊 ${sfxCount}`:''} • 🎵 ${sc.music}${trBadge?' • ':''}${trBadge}</div>
       ${wpDots?`<div class="wp-strip" title="${wpCount} waypoints">${wpDots}</div>`:''}
+      <div class="s-progress" title="Tiến trình preview"><i style="width:0%"></i></div>
       <div class="s-nav">
         <button data-a="left" title="Sang trái">◀</button>
         <button data-a="dup" title="Nhân bản">⧉</button>
@@ -1529,9 +1542,13 @@ function renderTimeline(){
     d.addEventListener('click', (e)=>{
       if (e.target.closest('.s-del')){ delScene(i); return; }
       const a = e.target.closest('.s-nav button')?.dataset.a;
-      if (a==='left'&&i>0){ moveScene(i,i-1); return; }
-      if (a==='right'&&i<state.project.scenes.length-1){ moveScene(i,i+1); return; }
-      if (a==='dup'){ dupScene(i); return; }
+      if (a){
+        if (state.playing){ toast('⏹ Dừng preview trước khi sửa timeline'); return; }
+        if (a==='left'&&i>0){ moveScene(i,i-1); return; }
+        if (a==='right'&&i<state.project.scenes.length-1){ moveScene(i,i+1); return; }
+        if (a==='dup'){ dupScene(i); return; }
+      }
+      if (state.playing){ seekPreview(i, 0); return; } // click block = seek during preview
       selectScene(i);
     });
     d.querySelector('.s-del').addEventListener('click', (e)=>{ e.stopPropagation(); delScene(i); });
@@ -1586,18 +1603,29 @@ function renderAudioTimeline(){
     return;
   }
   const dur = sc.duration || 10;
-  // ruler
+  // ruler (click = seek during preview)
   const ruler = document.createElement('div');
   ruler.className = 'audio-ruler';
+  ruler.title = state.playing ? 'Click để nhảy đến thời điểm (seek)' : '';
   for (let s = 0; s <= dur; s += Math.max(1, Math.round(dur/10))){
     const tick = document.createElement('span');
     tick.style.left = (s/dur*100)+'%';
     tick.textContent = s+'s';
     ruler.appendChild(tick);
   }
+  ruler.addEventListener('click', (e)=>{
+    if (!state.playing) return;
+    const r = ruler.getBoundingClientRect();
+    const t = Math.max(0, Math.min(dur - 0.05, (e.clientX - r.left) / r.width * dur));
+    seekPreview(state.playSceneIdx, t);
+  });
   el.appendChild(ruler);
   const lane = document.createElement('div');
   lane.className = 'audio-lane';
+  // playhead (updated per frame during preview)
+  const ph = document.createElement('div');
+  ph.className = 'audio-playhead';
+  lane.appendChild(ph);
   sc.sfx.forEach(clip=>{
     const info = (typeof SFXEngine !== 'undefined') ? SFXEngine.info(clip.key) : null;
     const cDur = clip.loop ? dur - clip.t0 : (clip.dur || 2);
@@ -1661,6 +1689,7 @@ let _mixHandle = null;
 function togglePreviewMix(){
   const btn = $('#btnPreviewMix');
   if (_mixHandle){ _mixHandle.stop(); _mixHandle = null; sfxEngine?.stopAll(); btn.textContent = '▶ Nghe thử mix'; return; }
+  if (state.playing){ toast('Đang preview toàn bộ — SFX đã phát theo timeline 🔊'); return; }
   const sc = activeSceneObj();
   if (!sc || !(sc.sfx||[]).length){ toast('Scene này chưa có SFX'); return; }
   _mixHandle = sfxEngine.playMix(sc.sfx, sc.duration);
@@ -1677,7 +1706,7 @@ $('#btnAddScene').addEventListener('click', ()=>{
 $('#btnDupScene').addEventListener('click', ()=>dupScene(state.activeScene));
 $('#btnDelScene').addEventListener('click', ()=>delScene(state.activeScene));
 
-// ---------- Preview ----------
+// ---------- Preview (Full sync: animation + SFX + weather + overlays + music) ----------
 // Flash a CSS transition on the stage when preview advances to a new scene.
 function flashTransition(scene){
   const box = $('#stageBox');
@@ -1689,24 +1718,161 @@ function flashTransition(scene){
   void box.offsetWidth; // restart animation
   box.classList.add('trf-'+t.type);
 }
+// PreviewController: drives the animation loop, schedules SFX via Web Audio
+// precise timing, and keeps weather/overlays in sync (both are deterministic
+// functions of scene-time, drawn every frame in drawFxLayer).
+//
+// Audio model per scene:
+//   - scene.music ('happy'|'sad'|...) -> mus_* SFX key, looped at volume 40
+//   - scene.sfx: [{key, t0, volume, loop}] — scheduled at exact t0 offsets
+// On scene change / pause / resume / seek, old audio is stopped and the
+// remaining clips are re-scheduled from the new offset.
+const MUSIC_KEY = {
+  happy: 'mus_happy', sad: 'mus_sad', adventure: 'mus_fest',
+  tense: 'mus_tense', romantic: 'mus_magic',
+};
+function sfxKeyDur(key){
+  return (typeof SFXEngine !== 'undefined') ? SFXEngine.duration(key) : 2;
+}
+/** Schedule a scene's full audio mix starting at scene-time `offset` (seconds).
+ *  Clips already passed are dropped; loop clips + music restart from 0. */
+function scheduleSceneAudio(sc, offset){
+  if (!sfxEngine) return;
+  sfxEngine.stopAll();
+  state._pvMix = null;
+  offset = Math.max(0, offset || 0);
+  const clips = [];
+  const mk = MUSIC_KEY[sc.music];
+  if (mk) clips.push({key: mk, t0: 0, volume: 40, loop: true, dur: sfxKeyDur(mk)});
+  for (const c of (sc.sfx || [])){
+    const d = sfxKeyDur(c.key);
+    const t0 = Math.max(0, +c.t0 || 0);
+    if (c.loop){
+      clips.push(Object.assign({}, c, {t0: 0, dur: d}));
+    } else if (t0 + d > offset + 0.05){
+      clips.push(Object.assign({}, c, {t0: Math.max(0, t0 - offset), dur: d}));
+    }
+  }
+  if (!clips.length) return;
+  state._pvMix = sfxEngine.playMix(clips, Math.max(0.1, sc.duration - offset));
+}
+/** Enter (or re-enter) a preview scene at scene-time offsetT.
+ *  Used for start, auto-advance, loop, pause/resume, and seek. */
+function enterPreviewScene(idx, offsetT){
+  const scenes = state.project.scenes;
+  if (!scenes.length) return;
+  idx = Math.max(0, Math.min(scenes.length - 1, idx));
+  const sc = scenes[idx];
+  offsetT = Math.max(0, Math.min(sc.duration - 0.05, offsetT || 0));
+  state.playSceneIdx = idx;
+  state.activeScene = idx;
+  state.paused = false;
+  state.playT0 = performance.now() - offsetT * 1000;
+  state.playElapsed = offsetT;
+  state.playBaseOffset = scenes.slice(0, idx).reduce((a, s) => a + s.duration, 0);
+  scheduleSceneAudio(sc, offsetT);
+  flashTransition(sc);
+  syncProps(); renderTimeline(); renderAudioTimeline();
+  updateSubtitle();
+  updatePauseBtn();
+}
+/** Seek during preview: jump to scene i at scene-time t. */
+function seekPreview(i, t){
+  if (!state.playing || !state.project.scenes.length) return;
+  enterPreviewScene(i, t);
+}
 function startPreview(){
   if (!state.project.scenes.length) return;
+  if (_mixHandle) togglePreviewMix(); // stop standalone mix preview first
   state.playing = true;
-  state.playSceneIdx = 0; state.activeScene = 0;
-  state.playT0 = performance.now();
-  $('#btnPreview').disabled = true; $('#btnStop').disabled = false;
-  syncProps(); renderTimeline();
-  toast('▶ Đang preview...');
+  $('#btnPreview').disabled = true; $('#btnStop').disabled = false; $('#btnPause').disabled = false;
+  document.body.classList.add('previewing');
+  enterPreviewScene(0, 0);
+  toast('▶ Preview: animation + SFX + weather đồng bộ');
+}
+function pausePreview(){
+  if (!state.playing || state.paused) return;
+  state.paused = true;
+  state.pauseElapsed = state.playElapsed || 0;
+  if (sfxEngine) sfxEngine.stopAll();
+  state._pvMix = null;
+  updatePauseBtn();
+  toast('⏸ Tạm dừng');
+}
+function resumePreview(){
+  if (!state.playing || !state.paused) return;
+  enterPreviewScene(state.playSceneIdx, state.pauseElapsed || 0);
+  toast('▶ Tiếp tục');
+}
+function togglePause(){
+  if (!state.playing) return;
+  if (state.paused) resumePreview(); else pausePreview();
+}
+function updatePauseBtn(){
+  const b = $('#btnPause');
+  if (b) b.textContent = (state.playing && state.paused) ? '▶' : '⏸';
 }
 function stopPreview(){
   state.playing = false;
+  state.paused = false;
   state.playElapsed = null;
+  state.pauseElapsed = 0;
+  state.playBaseOffset = 0;
   state.selectedChar = null;
-  $('#btnPreview').disabled = false; $('#btnStop').disabled = true;
-  syncProps(); renderTimeline(); draw();
+  if (sfxEngine) sfxEngine.stopAll();
+  state._pvMix = null;
+  $('#btnPreview').disabled = false; $('#btnStop').disabled = true; $('#btnPause').disabled = true;
+  updatePauseBtn();
+  document.body.classList.remove('previewing');
+  syncProps(); renderTimeline(); renderAudioTimeline(); draw();
 }
 $('#btnPreview').addEventListener('click', startPreview);
+$('#btnPause').addEventListener('click', togglePause);
 $('#btnStop').addEventListener('click', ()=>{ stopPreview(); toast('Đã dừng'); });
+// loop toggle (persisted)
+state.loopPreview = (typeof localStorage !== 'undefined' && localStorage.getItem('ds_loopPreview') === '1');
+function syncLoopBtn(){
+  const b = $('#btnLoop');
+  if (b){ b.classList.toggle('on', !!state.loopPreview); b.title = state.loopPreview ? 'Lặp lại preview: BẬT' : 'Lặp lại preview: TẮT'; }
+}
+$('#btnLoop').addEventListener('click', ()=>{
+  state.loopPreview = !state.loopPreview;
+  try{ localStorage.setItem('ds_loopPreview', state.loopPreview ? '1' : '0'); }catch(e){}
+  syncLoopBtn();
+  toast(state.loopPreview ? '🔁 Lặp lại preview: BẬT' : '🔁 Lặp lại preview: TẮT');
+});
+syncLoopBtn();
+
+/** Per-frame preview UI: total progress bar + time, scene-block playhead, audio playhead. */
+function fmtT(s){
+  s = Math.max(0, Math.floor(s || 0));
+  return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+}
+function updatePreviewUI(){
+  const bar = $('#pvBar'), tm = $('#pvTime');
+  const on = state.playing && state.project.scenes.length;
+  if (bar) bar.hidden = !on;
+  if (tm && !on) tm.textContent = '';
+  if (!on) return;
+  const scenes = state.project.scenes;
+  const sc = scenes[state.playSceneIdx];
+  if (!sc) return;
+  const el = state.playElapsed || 0;
+  const total = scenes.reduce((a, s) => a + s.duration, 0);
+  const cur = (state.playBaseOffset || 0) + el;
+  if (bar){ const f = bar.querySelector('i'); if (f) f.style.width = Math.min(100, cur / total * 100) + '%'; }
+  if (tm) tm.textContent = fmtT(cur) + ' / ' + fmtT(total) + (state.paused ? ' ⏸' : '');
+  const blocks = $('#timeline') ? $('#timeline').children : [];
+  for (let i = 0; i < blocks.length; i++){
+    const f = blocks[i].querySelector('.s-progress i');
+    if (!f) continue;
+    f.style.width = i === state.playSceneIdx
+      ? Math.min(100, el / sc.duration * 100) + '%'
+      : (i < state.playSceneIdx ? '100%' : '0%');
+  }
+  const ph = document.querySelector('#audioTimeline .audio-playhead');
+  if (ph) ph.style.left = Math.min(100, el / sc.duration * 100) + '%';
+}
 
 // ---------- Export / Import JSON ----------
 function exportJSON(){
@@ -2322,6 +2488,16 @@ updateUndoBtns();
 initPanelResize(); // VS Code-style draggable sidebar widths (persisted)
 requestAnimationFrame(loop);
 setTimeout(()=>toast('💡 Kéo nhân vật từ thư viện vào canvas để bắt đầu!'), 600);
+
+// ---------- Debug/test hook ----------
+// Exposes internals for automated tests and console debugging:
+// window.DS.state, DS.startPreview(), DS.seekPreview(i, t), ...
+window.DS = {
+  state, sfxEngine, fxEngine,
+  newScene, newOverlay, newSfxClip, tplSfx, syncAll,
+  startPreview, stopPreview, pausePreview, resumePreview, togglePause,
+  seekPreview, enterPreviewScene, scheduleSceneAudio, selectScene,
+};
 })();
 
 // ---------- Panel resize (Bug 1): drag handles between Library|Canvas|Properties ----------
