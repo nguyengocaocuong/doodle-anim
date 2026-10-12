@@ -201,7 +201,7 @@ function resolveBgImage(bgImage, storyDir) {
 }
 
 // ---- Build per-scene HTML page ----
-function buildSceneHtml(scene, story, engineScripts, weatherSrc, bgDataUrl, W, H) {
+function buildSceneHtml(scene, story, engineScripts, weatherSrc, bgDataUrl, propDataUrls, W, H) {
   const dur = scene.duration;
   const gy = scene.groundY ?? Math.round(H * 0.85);
 
@@ -261,6 +261,23 @@ function buildSceneHtml(scene, story, engineScripts, weatherSrc, bgDataUrl, W, H
        __bgImg.onerror = () => { window.__bgError = true; };`
     : `const __bgImg = null;
        window.__bgReady = true; /* no image bg */`;
+  // --- props (asset library): preload SVGs, draw under characters ---
+  const propBlocks = (scene.props || []).map((p, i) => {
+    const url = (propDataUrls || [])[i];
+    if (!url) return '';
+    const s = Math.round(170 * (p.scale || 1));
+    return `{
+      const im = new Image();
+      im.src = ${JSON.stringify(url)};
+      im.onload = () => { window.__propsReady++; };
+      im.onerror = () => { window.__propsReady++; };
+      window.__propImgs.push({im, x:${+p.x || 0}, y:${+p.y || 0}, s:${s}});
+    }`;
+  }).join('\n');
+  const propJs = `window.__propImgs = [];
+    window.__propsReady = 0;
+    window.__propsTotal = ${(scene.props || []).length};
+    ${propBlocks}`;
   const bgColor = (scene.background && scene.background.color) || null;
 
   return `<!DOCTYPE html>
@@ -277,6 +294,7 @@ const ctx = cv.getContext('2d');
 window.__chars = [];
 ${charBlocks}
 ${bgJs}
+${propJs}
 const __subs = ${JSON.stringify(scene.subtitles || [])};
 const __title = ${JSON.stringify(scene.title || '')};
 const __weather = ${JSON.stringify(scene.weather || {})};
@@ -340,6 +358,11 @@ window.__seek = function(t){
   const cam = camFn(t);
   ctx.save();
   ctx.translate(W/2, H/2); ctx.scale(cam.z, cam.z); ctx.translate(-W/2 - cam.x, -H/2 - cam.y);
+  const __psorted = [...window.__propImgs].sort((a,b)=>a.y-b.y);
+  for (const pr of __psorted){
+    if (pr.im.complete && pr.im.naturalWidth)
+      ctx.drawImage(pr.im, pr.x - pr.s/2, pr.y - pr.s, pr.s, pr.s);
+  }
   for (const h of window.__chars) h.draw(ctx, t, 1);
   ctx.restore();
   // --- weather particles (deterministic; screen space) ---
@@ -429,9 +452,26 @@ async function main() {
       console.log(`  bg image: ${p} (${buf.length} bytes)`);
     }
 
+    // props: resolve SVG files -> data URLs
+    const propDataUrls = (scene.props || []).map((p) => {
+      if (!p.file) return null;
+      const cands = [
+        join(REPO_ROOT, 'studio', p.file),
+        join(REPO_ROOT, 'templates', 'assets', p.file.replace(/^assets\//, '')),
+        join(storyDir, p.file),
+      ];
+      for (const c of cands) {
+        if (existsSync(c)) return `data:image/svg+xml;base64,${readFileSync(c).toString('base64')}`;
+      }
+      console.log(`  ! prop not found: ${p.file}`);
+      return null;
+    });
+    if (propDataUrls.some(Boolean)) console.log(`  props: ${propDataUrls.filter(Boolean).length} loaded`);
+
     await page.goto('about:blank');   // reset JS realm between scenes
-    await page.setContent(buildSceneHtml(scene, story, engineScripts, weatherSrc, bgDataUrl, W, H));
+    await page.setContent(buildSceneHtml(scene, story, engineScripts, weatherSrc, bgDataUrl, propDataUrls, W, H));
     await page.waitForFunction('window.__sceneReady === true', { timeout: 20000 });
+    await page.waitForFunction('window.__propsReady >= window.__propsTotal', { timeout: 20000 });
     if (bgDataUrl) {
       await page.waitForFunction('window.__bgReady === true', { timeout: 30000 });
       console.log('  ✓ background loaded');

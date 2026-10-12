@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <g>
+    <path d="M70.0 120.0 L90.0 118.3 L110.0 118.9 L130.0 120.0 L124.7 133.0 L120.4 146.2 L118.0 160.0 L106.0 158.6 L94.0 161.4 L82.0 160.0 Z" fill="#e15a5a" fill-opacity="0.88" stroke="#3d372f" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M130.0 120.0 L127.6 120.8 L126.9 123.0 L126.0 125.0 L122.1 125.5 L118.4 126.6 L115.0 128.7 L110.0 128.9 L105.0 129.6 L100.0 130.0 L95.0 129.4 L89.9 130.2 L85.0 128.7 L80.9 128.9 L77.8 126.0 L74.0 125.0 L72.8 123.3 L72.6 120.7 L70.0 120.0 L71.4 118.4 L72.2 116.3 L74.0 115.0 L77.4 113.1 L81.7 113.5 L85.0 111.3 L89.9 110.1 L94.9 109.2 L100.0 110.0 L105.0 110.2 L110.1 109.3 L115.0 111.3 L118.9 111.9 L122.7 112.7 L126.0 115.0 L126.8 117.1 L128.4 118.6 L130.0 120.0 Z" fill="#6b7280" fill-opacity="0.88" stroke="#3d372f" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M88.0 115.0 L88.0 101.7 L87.9 88.3 L88.0 75.0" fill="none" stroke="#e15a5a" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M88.0 70.0 L87.5 65.6 L88.9 61.7 L91.0 58.0 L90.6 54.0 L86.7 51.8 L86.0 48.0" fill="none" stroke="#b8bec9" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M100.0 115.0 L101.4 101.7 L100.5 88.3 L100.0 75.0" fill="none" stroke="#e15a5a" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M100.0 70.0 L101.9 66.2 L103.3 62.3 L103.0 58.0 L100.3 55.2 L100.2 51.1 L98.0 48.0" fill="none" stroke="#b8bec9" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M112.0 115.0 L110.6 101.7 L112.3 88.3 L112.0 75.0" fill="none" stroke="#e15a5a" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M112.0 70.0 L114.2 66.3 L114.2 62.1 L115.0 58.0 L114.9 53.9 L112.2 51.1 L110.0 48.0" fill="none" stroke="#b8bec9" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M108.0 140.0 L109.1 142.1 L108.2 143.5 L106.5 144.7 L105.8 146.6 L103.9 146.7 L102.5 147.6 L100.8 147.8 L99.2 147.6 L97.5 147.6 L96.7 145.9 L95.1 145.4 L93.5 144.7 L92.3 143.4 L91.7 141.8 L92.0 140.0 L93.7 138.8 L92.7 136.8 L93.5 135.3 L95.0 134.5 L97.1 134.7 L97.5 132.4 L99.2 133.3 L100.8 132.6 L102.5 132.4 L104.0 133.1 L105.8 133.4 L106.5 135.3 L105.7 137.3 L106.2 138.8 L108.0 140.0 Z" fill="#e8b84b" fill-opacity="0.88" stroke="#3d372f" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

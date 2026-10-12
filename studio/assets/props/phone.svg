@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <g>
+    <path d="M83.0 45.0 L94.3 46.2 L105.7 46.6 L117.0 45.0 L120.5 46.8 L122.3 50.3 L125.0 53.0 L123.6 84.3 L126.1 115.7 L125.0 147.0 L122.2 149.6 L119.1 151.7 L117.0 155.0 L105.7 153.3 L94.3 153.8 L83.0 155.0 L81.5 151.2 L76.5 150.8 L75.0 147.0 L74.4 115.7 L73.9 84.3 L75.0 53.0 Z" fill="#3d372f" fill-opacity="0.88" stroke="#3d372f" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M88.0 60.0 L96.0 59.1 L104.0 61.7 L112.0 60.0 L115.6 61.7 L117.8 64.8 L120.0 68.0 L118.8 89.3 L118.8 110.7 L120.0 132.0 L116.6 134.0 L113.6 136.3 L112.0 140.0 L104.0 138.4 L96.0 140.4 L88.0 140.0 L84.4 138.3 L81.7 135.6 L80.0 132.0 L81.0 110.7 L81.1 89.3 L80.0 68.0 Z" fill="#a8d8ea" fill-opacity="0.88" stroke="#3d372f" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M85.0 120.0 L95.0 119.9 L105.0 120.9 L115.0 120.0 L111.2 106.8 L108.1 93.4 L105.0 80.0 L101.7 80.8 L98.3 79.0 L95.0 80.0 Z" fill="#fdfdf8" fill-opacity="0.88" stroke="#3d372f" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M103.0 52.0 L104.2 53.0 L101.7 52.9 L102.4 53.8 L102.9 55.4 L101.9 55.1 L100.9 54.9 L100.3 53.4 L99.7 54.7 L99.1 54.9 L98.6 54.5 L97.7 54.6 L97.6 53.8 L98.3 52.9 L98.8 52.1 L97.0 52.0 L96.1 51.1 L96.7 50.6 L97.6 50.2 L98.6 50.6 L97.8 48.4 L99.1 49.1 L99.7 50.8 L100.3 49.0 L100.9 49.1 L102.2 48.5 L101.0 51.1 L102.4 50.2 L103.7 50.5 L102.6 51.5 L103.0 52.0 Z" fill="#fdfdf8" fill-opacity="0.88" stroke="#3d372f" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M92.0 148.0 L97.3 149.1 L102.7 147.9 L108.0 148.0" fill="none" stroke="#fdfdf8" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

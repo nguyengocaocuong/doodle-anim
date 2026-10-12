@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <g>
+    <path d="M70.0 60.0 L90.0 59.1 L110.0 61.2 L130.0 60.0 L130.5 90.0 L128.6 120.0 L130.0 150.0 L110.0 151.6 L90.0 149.0 L70.0 150.0 Z" fill="#e15a5a" fill-opacity="0.88" stroke="#3d372f" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M82.0 60.0 L82.0 90.0 L80.3 120.0 L82.0 150.0" fill="none" stroke="#3d372f" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M92.0 85.0 L102.0 83.8 L112.0 85.8 L122.0 85.0" fill="none" stroke="#fdfdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M92.0 100.0 L102.0 99.6 L112.0 98.9 L122.0 100.0" fill="none" stroke="#fdfdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M92.0 115.0 L102.0 113.6 L112.0 115.4 L122.0 115.0" fill="none" stroke="#fdfdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M92.0 130.0 L102.0 128.5 L112.0 129.4 L122.0 130.0" fill="none" stroke="#fdfdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M95.0 66.0 L103.0 64.7 L111.0 65.8 L119.0 66.0 L119.9 67.1 L121.4 67.6 L122.0 69.0 L121.9 71.0 L123.7 73.0 L122.0 75.0 L120.6 75.6 L121.1 78.1 L119.0 78.0 L111.0 79.7 L103.0 78.8 L95.0 78.0 L94.8 76.2 L91.8 77.2 L92.0 75.0 L92.8 73.0 L93.4 71.0 L92.0 69.0 Z" fill="#e8b84b" fill-opacity="0.88" stroke="#3d372f" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

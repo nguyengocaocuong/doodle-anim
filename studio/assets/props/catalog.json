@@ -1,0 +1,1181 @@
+[
+ {
+  "id": "aircon",
+  "name": "Điều hòa",
+  "category": "home",
+  "file": "props/aircon.svg",
+  "tags": [
+   "điều hòa",
+   "máy lạnh",
+   "aircon",
+   "ac"
+  ]
+ },
+ {
+  "id": "bed",
+  "name": "Giường",
+  "category": "home",
+  "file": "props/bed.svg",
+  "tags": [
+   "giường",
+   "bed",
+   "ngủ"
+  ]
+ },
+ {
+  "id": "bowl",
+  "name": "Bát cơm",
+  "category": "home",
+  "file": "props/bowl.svg",
+  "tags": [
+   "bát",
+   "chén",
+   "cơm",
+   "bowl",
+   "rice"
+  ]
+ },
+ {
+  "id": "broom",
+  "name": "Chổi",
+  "category": "home",
+  "file": "props/broom.svg",
+  "tags": [
+   "chổi",
+   "broom",
+   "quét"
+  ]
+ },
+ {
+  "id": "chair-bamboo",
+  "name": "Ghế tre",
+  "category": "home",
+  "file": "props/chair-bamboo.svg",
+  "tags": [
+   "ghế",
+   "tre",
+   "chair",
+   "bamboo"
+  ]
+ },
+ {
+  "id": "chair-plastic",
+  "name": "Ghế nhựa",
+  "category": "home",
+  "file": "props/chair-plastic.svg",
+  "tags": [
+   "ghế",
+   "nhựa",
+   "chair",
+   "plastic"
+  ]
+ },
+ {
+  "id": "chair-wood",
+  "name": "Ghế gỗ",
+  "category": "home",
+  "file": "props/chair-wood.svg",
+  "tags": [
+   "ghế",
+   "gỗ",
+   "chair",
+   "wood"
+  ]
+ },
+ {
+  "id": "chopsticks",
+  "name": "Đũa",
+  "category": "home",
+  "file": "props/chopsticks.svg",
+  "tags": [
+   "đũa",
+   "chopsticks"
+  ]
+ },
+ {
+  "id": "electric-lamp",
+  "name": "Bóng đèn điện",
+  "category": "home",
+  "file": "props/electric-lamp.svg",
+  "tags": [
+   "đèn",
+   "điện",
+   "bóng đèn",
+   "bulb"
+  ]
+ },
+ {
+  "id": "fan-ceiling",
+  "name": "Quạt trần",
+  "category": "home",
+  "file": "props/fan-ceiling.svg",
+  "tags": [
+   "quạt",
+   "trần",
+   "fan",
+   "ceiling"
+  ]
+ },
+ {
+  "id": "fan-standing",
+  "name": "Quạt đứng",
+  "category": "home",
+  "file": "props/fan-standing.svg",
+  "tags": [
+   "quạt",
+   "đứng",
+   "fan",
+   "cây"
+  ]
+ },
+ {
+  "id": "fridge",
+  "name": "Tủ lạnh",
+  "category": "home",
+  "file": "props/fridge.svg",
+  "tags": [
+   "tủ lạnh",
+   "fridge",
+   "refrigerator"
+  ]
+ },
+ {
+  "id": "gas-stove",
+  "name": "Bếp gas",
+  "category": "home",
+  "file": "props/gas-stove.svg",
+  "tags": [
+   "bếp",
+   "gas",
+   "stove",
+   "nấu"
+  ]
+ },
+ {
+  "id": "kettle",
+  "name": "Ấm đun nước",
+  "category": "home",
+  "file": "props/kettle.svg",
+  "tags": [
+   "ấm",
+   "kettle",
+   "nước",
+   "trà"
+  ]
+ },
+ {
+  "id": "lantern",
+  "name": "Đèn lồng",
+  "category": "home",
+  "file": "props/lantern.svg",
+  "tags": [
+   "đèn",
+   "lồng",
+   "lantern",
+   "hội an",
+   "tết"
+  ]
+ },
+ {
+  "id": "mirror",
+  "name": "Gương",
+  "category": "home",
+  "file": "props/mirror.svg",
+  "tags": [
+   "gương",
+   "mirror",
+   "soi"
+  ]
+ },
+ {
+  "id": "neon-sign",
+  "name": "Biển đèn neon",
+  "category": "home",
+  "file": "props/neon-sign.svg",
+  "tags": [
+   "neon",
+   "biển",
+   "đèn",
+   "sign"
+  ]
+ },
+ {
+  "id": "oil-lamp",
+  "name": "Đèn dầu",
+  "category": "home",
+  "file": "props/oil-lamp.svg",
+  "tags": [
+   "đèn",
+   "dầu",
+   "lamp",
+   "oil"
+  ]
+ },
+ {
+  "id": "pot",
+  "name": "Nồi",
+  "category": "home",
+  "file": "props/pot.svg",
+  "tags": [
+   "nồi",
+   "pot",
+   "nấu"
+  ]
+ },
+ {
+  "id": "rice-cooker",
+  "name": "Nồi cơm điện",
+  "category": "home",
+  "file": "props/rice-cooker.svg",
+  "tags": [
+   "nồi cơm",
+   "điện",
+   "rice cooker",
+   "cơm"
+  ]
+ },
+ {
+  "id": "spoon",
+  "name": "Muỗng",
+  "category": "home",
+  "file": "props/spoon.svg",
+  "tags": [
+   "muỗng",
+   "thìa",
+   "spoon"
+  ]
+ },
+ {
+  "id": "table",
+  "name": "Bàn",
+  "category": "home",
+  "file": "props/table.svg",
+  "tags": [
+   "bàn",
+   "table"
+  ]
+ },
+ {
+  "id": "tv",
+  "name": "Tivi",
+  "category": "home",
+  "file": "props/tv.svg",
+  "tags": [
+   "tivi",
+   "tv",
+   "truyền hình"
+  ]
+ },
+ {
+  "id": "wardrobe",
+  "name": "Tủ quần áo",
+  "category": "home",
+  "file": "props/wardrobe.svg",
+  "tags": [
+   "tủ",
+   "quần áo",
+   "wardrobe",
+   "closet"
+  ]
+ },
+ {
+  "id": "washing-machine",
+  "name": "Máy giặt",
+  "category": "home",
+  "file": "props/washing-machine.svg",
+  "tags": [
+   "máy giặt",
+   "washing",
+   "giặt"
+  ]
+ },
+ {
+  "id": "apartment",
+  "name": "Chung cư",
+  "category": "house",
+  "file": "props/apartment.svg",
+  "tags": [
+   "chung cư",
+   "apartment",
+   "cao ốc"
+  ]
+ },
+ {
+  "id": "church",
+  "name": "Nhà thờ",
+  "category": "house",
+  "file": "props/church.svg",
+  "tags": [
+   "nhà thờ",
+   "church"
+  ]
+ },
+ {
+  "id": "communal-house",
+  "name": "Đình làng",
+  "category": "house",
+  "file": "props/communal-house.svg",
+  "tags": [
+   "đình",
+   "làng",
+   "communal"
+  ]
+ },
+ {
+  "id": "fence",
+  "name": "Tường rào",
+  "category": "house",
+  "file": "props/fence.svg",
+  "tags": [
+   "tường",
+   "rào",
+   "fence",
+   "hàng rào"
+  ]
+ },
+ {
+  "id": "garden",
+  "name": "Vườn rau",
+  "category": "house",
+  "file": "props/garden.svg",
+  "tags": [
+   "vườn",
+   "rau",
+   "garden"
+  ]
+ },
+ {
+  "id": "gate",
+  "name": "Cổng",
+  "category": "house",
+  "file": "props/gate.svg",
+  "tags": [
+   "cổng",
+   "gate"
+  ]
+ },
+ {
+  "id": "hospital",
+  "name": "Bệnh viện",
+  "category": "house",
+  "file": "props/hospital.svg",
+  "tags": [
+   "bệnh viện",
+   "hospital",
+   "y tế"
+  ]
+ },
+ {
+  "id": "house-level4",
+  "name": "Nhà cấp 4",
+  "category": "house",
+  "file": "props/house-level4.svg",
+  "tags": [
+   "nhà",
+   "cấp 4",
+   "house",
+   "mái ngói"
+  ]
+ },
+ {
+  "id": "house-tube",
+  "name": "Nhà ống",
+  "category": "house",
+  "file": "props/house-tube.svg",
+  "tags": [
+   "nhà",
+   "ống",
+   "house",
+   "phố"
+  ]
+ },
+ {
+  "id": "market",
+  "name": "Chợ",
+  "category": "house",
+  "file": "props/market.svg",
+  "tags": [
+   "chợ",
+   "market"
+  ]
+ },
+ {
+  "id": "pagoda",
+  "name": "Chùa",
+  "category": "house",
+  "file": "props/pagoda.svg",
+  "tags": [
+   "chùa",
+   "pagoda",
+   "tâm linh"
+  ]
+ },
+ {
+  "id": "pond",
+  "name": "Ao sen",
+  "category": "house",
+  "file": "props/pond.svg",
+  "tags": [
+   "ao",
+   "sen",
+   "pond"
+  ]
+ },
+ {
+  "id": "rice-field",
+  "name": "Ruộng lúa",
+  "category": "house",
+  "file": "props/rice-field.svg",
+  "tags": [
+   "ruộng",
+   "lúa",
+   "rice",
+   "field"
+  ]
+ },
+ {
+  "id": "rong-house",
+  "name": "Nhà rông",
+  "category": "house",
+  "file": "props/rong-house.svg",
+  "tags": [
+   "nhà",
+   "rông",
+   "rong",
+   "tây nguyên"
+  ]
+ },
+ {
+  "id": "school",
+  "name": "Trường học",
+  "category": "house",
+  "file": "props/school.svg",
+  "tags": [
+   "trường",
+   "học",
+   "school"
+  ]
+ },
+ {
+  "id": "shop",
+  "name": "Cửa hàng",
+  "category": "house",
+  "file": "props/shop.svg",
+  "tags": [
+   "cửa hàng",
+   "shop",
+   "tạp hóa"
+  ]
+ },
+ {
+  "id": "stilt-house",
+  "name": "Nhà sàn",
+  "category": "house",
+  "file": "props/stilt-house.svg",
+  "tags": [
+   "nhà",
+   "sàn",
+   "stilt",
+   "dân tộc"
+  ]
+ },
+ {
+  "id": "villa",
+  "name": "Biệt thự",
+  "category": "house",
+  "file": "props/villa.svg",
+  "tags": [
+   "biệt thự",
+   "villa",
+   "nhà giàu"
+  ]
+ },
+ {
+  "id": "well",
+  "name": "Giếng nước",
+  "category": "house",
+  "file": "props/well.svg",
+  "tags": [
+   "giếng",
+   "well",
+   "nước"
+  ]
+ },
+ {
+  "id": "yard",
+  "name": "Sân nhà",
+  "category": "house",
+  "file": "props/yard.svg",
+  "tags": [
+   "sân",
+   "yard"
+  ]
+ },
+ {
+  "id": "cloud-1",
+  "name": "Mây trắng",
+  "category": "nature",
+  "file": "props/cloud-1.svg",
+  "tags": [
+   "mây",
+   "cloud",
+   "trắng"
+  ]
+ },
+ {
+  "id": "cloud-2",
+  "name": "Mây dải",
+  "category": "nature",
+  "file": "props/cloud-2.svg",
+  "tags": [
+   "mây",
+   "cloud",
+   "dải"
+  ]
+ },
+ {
+  "id": "cloud-3",
+  "name": "Mây mưa",
+  "category": "nature",
+  "file": "props/cloud-3.svg",
+  "tags": [
+   "mây",
+   "mưa",
+   "cloud",
+   "rain",
+   "đen"
+  ]
+ },
+ {
+  "id": "flower-apricot",
+  "name": "Hoa mai",
+  "category": "nature",
+  "file": "props/flower-apricot.svg",
+  "tags": [
+   "mai",
+   "apricot",
+   "hoa",
+   "tết"
+  ]
+ },
+ {
+  "id": "flower-flamboyant",
+  "name": "Hoa phượng đỏ",
+  "category": "nature",
+  "file": "props/flower-flamboyant.svg",
+  "tags": [
+   "phượng",
+   "hoa",
+   "đỏ",
+   "hè"
+  ]
+ },
+ {
+  "id": "flower-lotus",
+  "name": "Hoa sen",
+  "category": "nature",
+  "file": "props/flower-lotus.svg",
+  "tags": [
+   "sen",
+   "lotus",
+   "hoa"
+  ]
+ },
+ {
+  "id": "flower-peach",
+  "name": "Hoa đào",
+  "category": "nature",
+  "file": "props/flower-peach.svg",
+  "tags": [
+   "đào",
+   "peach",
+   "hoa",
+   "tết"
+  ]
+ },
+ {
+  "id": "fog",
+  "name": "Sương mù",
+  "category": "nature",
+  "file": "props/fog.svg",
+  "tags": [
+   "sương",
+   "mù",
+   "fog",
+   "mist"
+  ]
+ },
+ {
+  "id": "lightning",
+  "name": "Sấm sét",
+  "category": "nature",
+  "file": "props/lightning.svg",
+  "tags": [
+   "sấm",
+   "sét",
+   "lightning",
+   "chớp"
+  ]
+ },
+ {
+  "id": "moon-crescent",
+  "name": "Trăng khuyết",
+  "category": "nature",
+  "file": "props/moon-crescent.svg",
+  "tags": [
+   "trăng",
+   "khuyết",
+   "moon",
+   "crescent",
+   "đêm"
+  ]
+ },
+ {
+  "id": "moon-full",
+  "name": "Trăng tròn",
+  "category": "nature",
+  "file": "props/moon-full.svg",
+  "tags": [
+   "trăng",
+   "tròn",
+   "moon",
+   "full",
+   "rằm",
+   "đêm"
+  ]
+ },
+ {
+  "id": "rainbow",
+  "name": "Cầu vồng",
+  "category": "nature",
+  "file": "props/rainbow.svg",
+  "tags": [
+   "cầu vồng",
+   "rainbow"
+  ]
+ },
+ {
+  "id": "star",
+  "name": "Ngôi sao",
+  "category": "nature",
+  "file": "props/star.svg",
+  "tags": [
+   "sao",
+   "star",
+   "ngôi sao",
+   "đêm"
+  ]
+ },
+ {
+  "id": "sun-afternoon",
+  "name": "Mặt trời buổi chiều",
+  "category": "nature",
+  "file": "props/sun-afternoon.svg",
+  "tags": [
+   "mặt trời",
+   "chiều",
+   "sun",
+   "afternoon"
+  ]
+ },
+ {
+  "id": "sun-morning",
+  "name": "Mặt trời buổi sáng",
+  "category": "nature",
+  "file": "props/sun-morning.svg",
+  "tags": [
+   "mặt trời",
+   "sáng",
+   "sun",
+   "morning",
+   "bình minh"
+  ]
+ },
+ {
+  "id": "sun-noon",
+  "name": "Mặt trời buổi trưa",
+  "category": "nature",
+  "file": "props/sun-noon.svg",
+  "tags": [
+   "mặt trời",
+   "trưa",
+   "sun",
+   "noon",
+   "nắng"
+  ]
+ },
+ {
+  "id": "sun-sunset",
+  "name": "Hoàng hôn",
+  "category": "nature",
+  "file": "props/sun-sunset.svg",
+  "tags": [
+   "hoàng hôn",
+   "sunset",
+   "chiều tà",
+   "mặt trời lặn"
+  ]
+ },
+ {
+  "id": "tree-bamboo",
+  "name": "Cây tre",
+  "category": "nature",
+  "file": "props/tree-bamboo.svg",
+  "tags": [
+   "tre",
+   "bamboo",
+   "trúc",
+   "cây"
+  ]
+ },
+ {
+  "id": "tree-bang",
+  "name": "Cây bàng",
+  "category": "nature",
+  "file": "props/tree-bang.svg",
+  "tags": [
+   "bàng",
+   "tree",
+   "cây"
+  ]
+ },
+ {
+  "id": "tree-banyan",
+  "name": "Cây đa",
+  "category": "nature",
+  "file": "props/tree-banyan.svg",
+  "tags": [
+   "cây",
+   "đa",
+   "banyan",
+   "tree",
+   "cổ thụ"
+  ]
+ },
+ {
+  "id": "tree-coconut",
+  "name": "Cây dừa",
+  "category": "nature",
+  "file": "props/tree-coconut.svg",
+  "tags": [
+   "dừa",
+   "coconut",
+   "palm",
+   "cây"
+  ]
+ },
+ {
+  "id": "tree-flamboyant",
+  "name": "Cây phượng",
+  "category": "nature",
+  "file": "props/tree-flamboyant.svg",
+  "tags": [
+   "phượng",
+   "flamboyant",
+   "cây",
+   "hoa đỏ"
+  ]
+ },
+ {
+  "id": "altar",
+  "name": "Bàn thờ",
+  "category": "tools",
+  "file": "props/altar.svg",
+  "tags": [
+   "bàn thờ",
+   "altar",
+   "tâm linh",
+   "thờ cúng"
+  ]
+ },
+ {
+  "id": "backpack",
+  "name": "Ba lô",
+  "category": "tools",
+  "file": "props/backpack.svg",
+  "tags": [
+   "ba lô",
+   "balo",
+   "backpack",
+   "cặp"
+  ]
+ },
+ {
+  "id": "basket",
+  "name": "Thúng mủng",
+  "category": "tools",
+  "file": "props/basket.svg",
+  "tags": [
+   "thúng",
+   "mủng",
+   "basket",
+   "rổ"
+  ]
+ },
+ {
+  "id": "blackboard",
+  "name": "Bảng đen",
+  "category": "tools",
+  "file": "props/blackboard.svg",
+  "tags": [
+   "bảng",
+   "đen",
+   "blackboard",
+   "lớp học"
+  ]
+ },
+ {
+  "id": "book",
+  "name": "Sách vở",
+  "category": "tools",
+  "file": "props/book.svg",
+  "tags": [
+   "sách",
+   "vở",
+   "book",
+   "học"
+  ]
+ },
+ {
+  "id": "carrying-pole",
+  "name": "Đòn gánh",
+  "category": "tools",
+  "file": "props/carrying-pole.svg",
+  "tags": [
+   "gánh",
+   "đòn gánh",
+   "carrying"
+  ]
+ },
+ {
+  "id": "conical-hat",
+  "name": "Nón lá",
+  "category": "tools",
+  "file": "props/conical-hat.svg",
+  "tags": [
+   "nón",
+   "lá",
+   "hat",
+   "conical"
+  ]
+ },
+ {
+  "id": "drum",
+  "name": "Trống",
+  "category": "tools",
+  "file": "props/drum.svg",
+  "tags": [
+   "trống",
+   "drum",
+   "hội"
+  ]
+ },
+ {
+  "id": "hand-fan",
+  "name": "Quạt nan",
+  "category": "tools",
+  "file": "props/hand-fan.svg",
+  "tags": [
+   "quạt",
+   "nan",
+   "fan",
+   "tay"
+  ]
+ },
+ {
+  "id": "handbag",
+  "name": "Túi xách",
+  "category": "tools",
+  "file": "props/handbag.svg",
+  "tags": [
+   "túi",
+   "xách",
+   "handbag",
+   "túi xách"
+  ]
+ },
+ {
+  "id": "hoe",
+  "name": "Cuốc",
+  "category": "tools",
+  "file": "props/hoe.svg",
+  "tags": [
+   "cuốc",
+   "hoe",
+   "làm ruộng"
+  ]
+ },
+ {
+  "id": "incense-bowl",
+  "name": "Bát hương",
+  "category": "tools",
+  "file": "props/incense-bowl.svg",
+  "tags": [
+   "bát hương",
+   "incense",
+   "thờ"
+  ]
+ },
+ {
+  "id": "kite",
+  "name": "Diều",
+  "category": "tools",
+  "file": "props/kite.svg",
+  "tags": [
+   "diều",
+   "kite",
+   "bay"
+  ]
+ },
+ {
+  "id": "laptop",
+  "name": "Máy tính xách tay",
+  "category": "tools",
+  "file": "props/laptop.svg",
+  "tags": [
+   "laptop",
+   "máy tính",
+   "computer"
+  ]
+ },
+ {
+  "id": "pen",
+  "name": "Bút viết",
+  "category": "tools",
+  "file": "props/pen.svg",
+  "tags": [
+   "bút",
+   "pen",
+   "viết"
+  ]
+ },
+ {
+  "id": "phone",
+  "name": "Điện thoại",
+  "category": "tools",
+  "file": "props/phone.svg",
+  "tags": [
+   "điện thoại",
+   "phone",
+   "smartphone"
+  ]
+ },
+ {
+  "id": "pith-helmet",
+  "name": "Mũ cối",
+  "category": "tools",
+  "file": "props/pith-helmet.svg",
+  "tags": [
+   "mũ",
+   "cối",
+   "helmet",
+   "bộ đội"
+  ]
+ },
+ {
+  "id": "shovel",
+  "name": "Xẻng",
+  "category": "tools",
+  "file": "props/shovel.svg",
+  "tags": [
+   "xẻng",
+   "shovel",
+   "xúc"
+  ]
+ },
+ {
+  "id": "suitcase",
+  "name": "Va li",
+  "category": "tools",
+  "file": "props/suitcase.svg",
+  "tags": [
+   "vali",
+   "suitcase",
+   "hành lý"
+  ]
+ },
+ {
+  "id": "umbrella",
+  "name": "Ô dù",
+  "category": "tools",
+  "file": "props/umbrella.svg",
+  "tags": [
+   "ô",
+   "dù",
+   "umbrella",
+   "mưa"
+  ]
+ },
+ {
+  "id": "bicycle",
+  "name": "Xe đạp",
+  "category": "vehicle",
+  "file": "props/bicycle.svg",
+  "tags": [
+   "xe đạp",
+   "bicycle",
+   "bike"
+  ]
+ },
+ {
+  "id": "boat",
+  "name": "Thuyền buồm",
+  "category": "vehicle",
+  "file": "props/boat.svg",
+  "tags": [
+   "thuyền",
+   "buồm",
+   "boat",
+   "sail"
+  ]
+ },
+ {
+  "id": "bridge-bamboo",
+  "name": "Cầu tre",
+  "category": "vehicle",
+  "file": "props/bridge-bamboo.svg",
+  "tags": [
+   "cầu",
+   "tre",
+   "bridge",
+   "bamboo"
+  ]
+ },
+ {
+  "id": "bridge-concrete",
+  "name": "Cầu bê tông",
+  "category": "vehicle",
+  "file": "props/bridge-concrete.svg",
+  "tags": [
+   "cầu",
+   "bê tông",
+   "bridge",
+   "concrete"
+  ]
+ },
+ {
+  "id": "bus",
+  "name": "Xe buýt",
+  "category": "vehicle",
+  "file": "props/bus.svg",
+  "tags": [
+   "xe buýt",
+   "bus"
+  ]
+ },
+ {
+  "id": "car",
+  "name": "Ô tô",
+  "category": "vehicle",
+  "file": "props/car.svg",
+  "tags": [
+   "ô tô",
+   "xe hơi",
+   "car"
+  ]
+ },
+ {
+  "id": "cyclo",
+  "name": "Xích lô",
+  "category": "vehicle",
+  "file": "props/cyclo.svg",
+  "tags": [
+   "xích lô",
+   "cyclo",
+   "xe"
+  ]
+ },
+ {
+  "id": "motorbike",
+  "name": "Xe máy",
+  "category": "vehicle",
+  "file": "props/motorbike.svg",
+  "tags": [
+   "xe máy",
+   "motorbike",
+   "xe",
+   "honda"
+  ]
+ },
+ {
+  "id": "power-pole",
+  "name": "Cột điện",
+  "category": "vehicle",
+  "file": "props/power-pole.svg",
+  "tags": [
+   "cột",
+   "điện",
+   "power",
+   "dây điện"
+  ]
+ },
+ {
+  "id": "road-asphalt",
+  "name": "Đường nhựa",
+  "category": "vehicle",
+  "file": "props/road-asphalt.svg",
+  "tags": [
+   "đường",
+   "nhựa",
+   "road",
+   "asphalt"
+  ]
+ },
+ {
+  "id": "road-dirt",
+  "name": "Đường đất",
+  "category": "vehicle",
+  "file": "props/road-dirt.svg",
+  "tags": [
+   "đường",
+   "đất",
+   "road",
+   "dirt",
+   "làng"
+  ]
+ },
+ {
+  "id": "sampan",
+  "name": "Ghe xuồng",
+  "category": "vehicle",
+  "file": "props/sampan.svg",
+  "tags": [
+   "ghe",
+   "xuồng",
+   "sampan",
+   "sông"
+  ]
+ },
+ {
+  "id": "sign-board",
+  "name": "Biển báo",
+  "category": "vehicle",
+  "file": "props/sign-board.svg",
+  "tags": [
+   "biển",
+   "báo",
+   "sign"
+  ]
+ },
+ {
+  "id": "traffic-light",
+  "name": "Đèn giao thông",
+  "category": "vehicle",
+  "file": "props/traffic-light.svg",
+  "tags": [
+   "đèn",
+   "giao thông",
+   "traffic"
+  ]
+ },
+ {
+  "id": "truck",
+  "name": "Xe tải",
+  "category": "vehicle",
+  "file": "props/truck.svg",
+  "tags": [
+   "xe tải",
+   "truck"
+  ]
+ }
+]
