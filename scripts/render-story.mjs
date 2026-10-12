@@ -226,7 +226,7 @@ function buildSceneHtml(scene, story, engineScripts, weatherSrc, bgDataUrl, prop
     const emotes = (c.emotes || []).map((e, j) =>
       `{what:${JSON.stringify(e.what)},t0:${e.t0},t1:${e.t1},seed:${seed * 10 + j}}`).join(',');
     return `{
-      const h = new ${c.kind === 'pet' ? (ANIMAL_KINDS.includes(c.petKind) ? 'Animal' : 'Pet') : 'Human'}(${seed}, Object.assign({ h: ${c.h || 290}, duration: ${dur}, W: ${W}, groundTop: ${gy}, groundBot: ${gy}, x0: ${W / 2} }, ${JSON.stringify(c.kind === 'pet' ? { petKind: c.petKind || 'dog' } : {})}));
+      const h = new ${c.kind === 'pet' ? (ANIMAL_KINDS.includes(c.petKind) ? 'Animal' : 'Pet') : 'Human'}(${seed}, Object.assign({ h: ${c.h || 290}, duration: ${dur}, W: ${W}, groundTop: ${gy}, groundBot: ${gy}, x0: ${W / 2}, solid: ${c.solid !== false} }, ${JSON.stringify(c.kind === 'pet' ? { petKind: c.petKind || 'dog' } : {})}));
       Object.assign(h, ${JSON.stringify(attrs)});
       h.tl = ${JSON.stringify(tl)};
       h.emotes = [${emotes}];

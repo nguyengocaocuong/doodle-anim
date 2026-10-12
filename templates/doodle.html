@@ -97,14 +97,19 @@ function pathFrom(pts, close){
   return p;
 }
 
+// Solid mode flag: when true, characters render with opaque fills and
+// thicker outlines instead of watercolor washes. Set per-character via
+// opts.solid, applied in DoodleChar.begin().
+let SOLID_MODE = false;
+
 // Hand-drawn stroke: 2 passes, slight re-wobble, pencil color.
 function roughStroke(ctx, pts, o={}){
   const seed  = o.seed  ?? 1;
   const wob   = o.wobble ?? 1.4;
   const close = o.close ?? false;
-  const width = o.width ?? 1.7;
+  const width = (o.width ?? 1.7) * (SOLID_MODE ? 1.6 : 1);
   const alpha = o.alpha ?? 0.8;
-  const color = o.color ?? PENCIL;
+  const color = SOLID_MODE ? '#2a2a2a' : (o.color ?? PENCIL);
   const sub = subdivide(pts, 7);
   ctx.save();
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
@@ -119,8 +124,18 @@ function roughStroke(ctx, pts, o={}){
 }
 
 // Watercolor fill: several perturbed low-alpha layers that bleed past the outline.
+// In SOLID_MODE: single opaque fill for characters that stand out from background.
 function washFill(ctx, pts, color, o={}){
   const seed   = o.seed ?? 1;
+  // Solid mode: one opaque layer, no bleed
+  if(SOLID_MODE){
+    ctx.save();
+    ctx.globalAlpha = o.solidAlpha ?? 0.95;
+    ctx.fillStyle = color;
+    ctx.fill(pathFrom(pts, true));
+    ctx.restore();
+    return;
+  }
   const layers = o.layers ?? 4;
   const alpha  = o.alpha ?? 0.10;
   const bleed  = o.bleed ?? 3.0;
@@ -323,6 +338,7 @@ class DoodleChar {
     this.blinkOff = rng.range(0, 5);
     this.swayOff = rng.range(0, Math.PI*2);
     this.emotes = [];   // [{what, t0, t1, seed}] — filled by script compiler
+    this.solid = !!opts.solid;  // solid=true: opaque fills, thicker outlines
   }
   blinking(t){
     const m = (t + this.blinkOff) % this.blinkPeriod;
@@ -347,11 +363,12 @@ class DoodleChar {
   }
   // Standard transform: feet at (x, groundY), flip by dir, scale by depth.
   begin(ctx, pose, depthScale){
+    SOLID_MODE = this.solid;
     ctx.save();
     ctx.translate(pose.x, pose.y);
     ctx.scale(depthScale * pose.dir, depthScale);
   }
-  end(ctx){ ctx.restore(); }
+  end(ctx){ SOLID_MODE = false; ctx.restore(); }
 }
 
 /* ---------------- human ---------------- */
